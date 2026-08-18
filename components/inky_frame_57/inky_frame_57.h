@@ -18,6 +18,9 @@ class InkyFrame57 : public display::DisplayBuffer,
   const int SR_CLK_PIN = 8;
   const int SR_LATCH_PIN = 9;
   const int SR_DATA_PIN = 10;
+  
+  // Critical Pimoroni Power Pin
+  const int HOLD_VSYS_EN_PIN = 2; 
 
   void command(uint8_t command) {
     digitalWrite(DC_PIN, LOW);
@@ -55,12 +58,18 @@ class InkyFrame57 : public display::DisplayBuffer,
   void wait_busy() {
     while (is_busy()) {
       delay(50);
+      App.feed_wdt(); // Tells ESPHome's watchdog that the system hasn't frozen
       yield(); 
     }
   }
 
  public:
   void setup() override {
+    // 1. TURN ON SYSTEM POWER IMMEDIATELY
+    pinMode(HOLD_VSYS_EN_PIN, OUTPUT);
+    digitalWrite(HOLD_VSYS_EN_PIN, HIGH);
+    delay(50); // Give the peripherals a moment to wake up
+      
     pinMode(DC_PIN, OUTPUT);
     pinMode(RST_PIN, OUTPUT);
     pinMode(SR_CLK_PIN, OUTPUT);
@@ -158,7 +167,6 @@ class InkyFrame57 : public display::DisplayBuffer,
   int get_width_internal() override { return 600; }
   int get_height_internal() override { return 448; }
 
-  // Tells ESPHome core this is a color display natively
   display::DisplayType get_display_type() override { 
     return display::DisplayType::DISPLAY_TYPE_COLOR; 
   }
