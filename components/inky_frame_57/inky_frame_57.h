@@ -39,15 +39,11 @@ class InkyFrame57 : public display::DisplayBuffer,
   }
 
   bool is_busy() {
-    // Latch the current states into the shift register
     digitalWrite(SR_LATCH_PIN, LOW);
     delayMicroseconds(1);
     digitalWrite(SR_LATCH_PIN, HIGH);
     delayMicroseconds(1);
 
-    // The 74HC165 outputs Pin H (Busy) immediately on the data line.
-    // We do not need to clock through the other 7 bits (the buttons) 
-    // just to check the busy state.
     return digitalRead(SR_DATA_PIN) == LOW; 
   }
 
@@ -93,10 +89,6 @@ class InkyFrame57 : public display::DisplayBuffer,
     data(0x02); data(0x58); data(0x01); data(0xC0);
 
     command(0xE3); data(0xAA);
-
-    ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
-    command(0x04); 
-    wait_busy();
     
     initialised_ = true;
     ESP_LOGI(TAG, "Display Initialization Complete!");
@@ -115,13 +107,21 @@ class InkyFrame57 : public display::DisplayBuffer,
 
     this->spi_setup();
 
-    buffer_ = new uint8_t[600 * 448 / 2];
-    memset(buffer_, 0x11, 600 * 448 / 2); 
+    this->set_timeout(5000, [this]() {
+        ESP_LOGI(TAG, "Attempting to allocate 134KB frame buffer...");
+        buffer_ = new (std::nothrow) uint8_t[600 * 448 / 2];
+        
+        if (buffer_ == nullptr) {
+            ESP_LOGE(TAG, "FATAL: OUT OF MEMORY! Could not allocate display buffer.");
+            return; 
+        }
+        
+        // Pre-fill buffer with white (0x11)
+        memset(buffer_, 0x11, 600 * 448 / 2); 
+        ESP_LOGI(TAG, "Buffer allocated successfully.");
 
-    // Defer the heavy initialization by 3 seconds to let USB and WiFi connect
-    this->set_timeout(3000, [this]() {
         this->init_display();
-        this->update(); // Trigger the first drawing automatically
+        this->update(); 
     });
   }
 
@@ -134,6 +134,10 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     this->do_update_();
     
+    ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
+    command(0x04);
+    wait_busy();
+
     ESP_LOGI(TAG, "Transmitting buffer to display...");
     command(0x10); 
     digitalWrite(DC_PIN, HIGH);
@@ -141,10 +145,30 @@ class InkyFrame57 : public display::DisplayBuffer,
     this->write_array(buffer_, 600 * 448 / 2);
     this->disable();
     
-    ESP_LOGI(TAG, "Commanding screen refresh (this takes up to 30s)...");
+    ESP_LOGI(TAG, "Commanding screen refresh...");
     command(0x12); 
     wait_busy();
+
+    ESP_LOGI(TAG, "Powering OFF E-Ink Panel (Burn-in protection)...");
+    command(0x02);
+    wait_busy();
+
     ESP_LOGI(TAG, "Screen refresh complete.");
+  }
+
+  // Highly optimized fill override for instant background rendering
+  void fill(Color color) override {
+    uint8_t c = 1; 
+    if (color.r < 50 && color.g < 50 && color.b < 50) c = 0; 
+    else if (color.r > 200 && color.g > 200 && color.b > 200) c = 1; 
+    else if (color.r < 100 && color.g > 150 && color.b < 100) c = 2; 
+    else if (color.r < 100 && color.g < 100 && color.b > 150) c = 3; 
+    else if (color.r > 150 && color.g < 100 && color.b < 100) c = 4; 
+    else if (color.r > 200 && color.g > 200 && color.b < 100) c = 5; 
+    else if (color.r > 200 && color.g > 100 && color.b < 50) c = 6; 
+
+    uint8_t packed = (c << 4) | c;
+    memset(buffer_, packed, 600 * 448 / 2);
   }
 
   void draw_absolute_pixel_internal(int x, int y, Color color) override {
