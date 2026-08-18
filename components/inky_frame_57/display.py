@@ -15,11 +15,10 @@ CONFIG_SCHEMA = display.FULL_DISPLAY_SCHEMA.extend({
 }).extend(cv.polling_component_schema("60s")).extend(spi.spi_device_schema())
 
 async def to_code(config):
-    # Automatically include the C++ header during compilation
-    cg.add_global(cg.RawStatement('#include "inky_frame_57.h"'))
+    # Specify the exact internal path where ESPHome places external component files
+    cg.add_global(cg.RawStatement('#include "esphome/components/inky_frame_57/inky_frame_57.h"'))
     
     var = cg.new_Pvariable(config[CONF_ID])
     
-    # Registering the display automatically registers the component
     await display.register_display(var, config)
     await spi.register_spi_device(var, config)
