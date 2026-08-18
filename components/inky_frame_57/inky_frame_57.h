@@ -39,22 +39,16 @@ class InkyFrame57 : public display::DisplayBuffer,
   }
 
   bool is_busy() {
+    // Latch the current states into the shift register
     digitalWrite(SR_LATCH_PIN, LOW);
     delayMicroseconds(1);
     digitalWrite(SR_LATCH_PIN, HIGH);
     delayMicroseconds(1);
 
-    uint8_t state = 0;
-    for (int i = 0; i < 8; i++) {
-      if (digitalRead(SR_DATA_PIN)) {
-        state |= (1 << i);
-      }
-      digitalWrite(SR_CLK_PIN, HIGH);
-      delayMicroseconds(1);
-      digitalWrite(SR_CLK_PIN, LOW);
-      delayMicroseconds(1);
-    }
-    return (state & 0x80) == 0; 
+    // The 74HC165 outputs Pin H (Busy) immediately on the data line.
+    // We do not need to clock through the other 7 bits (the buttons) 
+    // just to check the busy state.
+    return digitalRead(SR_DATA_PIN) == LOW; 
   }
 
   void wait_busy() {
