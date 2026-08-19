@@ -11,8 +11,9 @@ namespace inky_frame_57 {
 static const char *const TAG = "inky_frame_57";
 
 class InkyFrame57 : public display::DisplayBuffer,
+                    // Dropped to 2MHz for bulletproof data integrity over 134KB
                     public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW,
-                                          spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_4MHZ> {
+                                          spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_2MHZ> {
  protected:
   uint8_t *buffer_;
   bool initialised_ = false;
@@ -23,10 +24,10 @@ class InkyFrame57 : public display::DisplayBuffer,
   const int HOLD_VSYS_EN_PIN = 2; 
 
   void command(uint8_t command) {
-    this->enable(); // Locks SPI bus safely
+    this->enable(); // Locks SPI bus
     digitalWrite(DC_PIN, LOW);
     digitalWrite(CS_PIN, LOW); 
-    this->write_byte(command);
+    this->parent_->write(&command, 1); // Bypass internal locks
     digitalWrite(CS_PIN, HIGH);
     this->disable(); // Unlocks SPI bus
   }
@@ -35,18 +36,17 @@ class InkyFrame57 : public display::DisplayBuffer,
     this->enable();
     digitalWrite(DC_PIN, HIGH);
     digitalWrite(CS_PIN, LOW);
-    this->write_byte(data);
+    this->parent_->write(&data, 1);
     digitalWrite(CS_PIN, HIGH);
     this->disable();
   }
 
-  // Pure time-based wait, as the 5.7" has no physical busy pin connected
   void wait_busy(const char* step, uint32_t delay_ms) {
     ESP_LOGI(TAG, "Waiting %d ms for %s...", delay_ms, step);
     uint32_t start = millis();
     while (millis() - start < delay_ms) {
       delay(50);
-      App.feed_wdt(); // Keeps ESPHome alive during the 35s refresh
+      App.feed_wdt(); 
       yield(); 
     }
     ESP_LOGI(TAG, "%s complete!", step);
@@ -71,7 +71,6 @@ class InkyFrame57 : public display::DisplayBuffer,
     command(0x61); data(0x02); data(0x58); data(0x01); data(0xC0);
     command(0xE3); data(0xAA);
     
-    initialised_ = true;
     ESP_LOGI(TAG, "Display Initialization Complete!");
   }
 
@@ -99,9 +98,8 @@ class InkyFrame57 : public display::DisplayBuffer,
         
         memset(buffer_, 0x11, 600 * 448 / 2); 
         ESP_LOGI(TAG, "Buffer allocated successfully.");
-
-        this->init_display();
-        this->update(); 
+        
+        initialised_ = true;
     });
   }
 
@@ -111,38 +109,44 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     this->do_update_();
     
-    // 1. Power ON
-    ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
-    command(0x04);
-    wait_busy("Power ON", 1000);
-
-    // 2. Transmit Image Data
-    ESP_LOGI(TAG, "Transmitting buffer to display...");
-    command(0x10); 
+    // CRITICAL: The UC8159 loses its registers after Power OFF (0x02).
+    // We must re-initialize the hardware at the start of every update cycle!
+    init_display();
     
-    this->enable(); // Lock SPI
+    ESP_LOGI(TAG, "Transmitting buffer to display...");
+    
+    this->enable(); // Lock SPI bus
+    digitalWrite(CS_PIN, LOW); // CS MUST STAY LOW FOR COMMAND + DATA
+    
+    // Send Command 0x10
+    digitalWrite(DC_PIN, LOW);
+    uint8_t cmd = 0x10;
+    this->parent_->write(&cmd, 1);
+    
+    // Send Data
     digitalWrite(DC_PIN, HIGH);
-    digitalWrite(CS_PIN, LOW); // Hold CS manually
     
     size_t remaining = 600 * 448 / 2;
     uint8_t *ptr = buffer_;
     while (remaining > 0) {
       size_t chunk = remaining > 4096 ? 4096 : remaining;
-      this->write_array(ptr, chunk);
+      this->parent_->write(ptr, chunk);
       ptr += chunk;
       remaining -= chunk;
       App.feed_wdt(); 
     }
     
-    digitalWrite(CS_PIN, HIGH); // Release CS
+    digitalWrite(CS_PIN, HIGH); // Release CS only after all 134KB are sent
     this->disable(); // Unlock SPI
     
-    // 3. Screen Refresh
+    ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
+    command(0x04);
+    wait_busy("Power ON", 1000);
+
     ESP_LOGI(TAG, "Commanding screen refresh...");
     command(0x12); 
-    wait_busy("Screen Refresh", 35000); // Strict 35-second hardware wait
+    wait_busy("Screen Refresh", 35000); // 35 second physical refresh
 
-    // 4. Power OFF (Burn-in protection)
     ESP_LOGI(TAG, "Powering OFF E-Ink Panel...");
     command(0x02);
     wait_busy("Power OFF", 1000);
