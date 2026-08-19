@@ -44,7 +44,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "Waiting %d ms for %s...", delay_ms, step);
     uint32_t start = millis();
     while (millis() - start < delay_ms) {
-      delay(50);
+      delay(10);
       App.feed_wdt(); 
       yield(); 
     }
@@ -54,11 +54,9 @@ class InkyFrame57 : public display::DisplayBuffer,
   void init_display() {
     ESP_LOGI(TAG, "Starting Hardware Reset...");
     digitalWrite(RST_PIN, LOW);
-    
-    // RESTORED: Standard blocking delays. No yielding to the Wi-Fi chip!
-    delay(20); 
+    wait_busy("Reset LOW pulse", 20); 
     digitalWrite(RST_PIN, HIGH);
-    delay(200);
+    wait_busy("Reset HIGH stabilization", 200); 
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
     command(0x00); data(0xEF); data(0x08); 
@@ -109,28 +107,23 @@ class InkyFrame57 : public display::DisplayBuffer,
 
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     
-    // 1. Force the background to Brilliant White natively
-    memset(buffer_, 0x11, 600 * 448 / 2);
+    // 1. ESPHome calls clear(), which our hijacked fill() turns to Brilliant White.
+    // 2. Then it flawlessly executes your YAML graphics.
+    this->do_update_(); 
     
-    // 2. BRUTAL OVERRIDE: Ignore ESPHome's is_ready() check and force the YAML lambda to run!
-    if (this->writer_local_.has_value()) {
-      (*this->writer_local_)(this);
-    }
-    
-    // 3. Heartbeat Square (Guarantees the hardware hash check sees a change)
+    // 3. Giant 50x50 alternating Red/White block to completely defeat the hardware hash check
     static bool heartbeat_toggle = false;
     heartbeat_toggle = !heartbeat_toggle;
-    uint8_t hb_color = heartbeat_toggle ? 4 : 2; // Red or Green
+    uint8_t hb_color = heartbeat_toggle ? 4 : 1; // 4 = Red, 1 = White
 
-    for (int y = 0; y < 10; y++) {
-      for (int x = 0; x < 10; x++) {
+    for (int y = 0; y < 50; y++) {
+      for (int x = 0; x < 50; x++) {
         int idx = (y * 600 + x) / 2;
         if (x % 2 == 0) buffer_[idx] = (buffer_[idx] & 0x0F) | (hb_color << 4);
         else buffer_[idx] = (buffer_[idx] & 0xF0) | hb_color;
       }
     }
     
-    // 4. Send to hardware
     init_display();
     
     ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
@@ -174,17 +167,10 @@ class InkyFrame57 : public display::DisplayBuffer,
   }
 
   void fill(Color color) override {
-    uint8_t c = 1; 
-    if (color.r < 50 && color.g < 50 && color.b < 50) c = 0; 
-    else if (color.r > 200 && color.g > 200 && color.b > 200) c = 1; 
-    else if (color.r < 100 && color.g > 150 && color.b < 100) c = 2; 
-    else if (color.r < 100 && color.g < 100 && color.b > 150) c = 3; 
-    else if (color.r > 150 && color.g < 100 && color.b < 100) c = 4; 
-    else if (color.r > 200 && color.g > 200 && color.b < 100) c = 5; 
-    else if (color.r > 200 && color.g > 100 && color.b < 50) c = 6; 
-
-    uint8_t packed = (c << 4) | c;
-    memset(buffer_, packed, 600 * 448 / 2);
+    // THE ULTIMATE HIJACK
+    // ESPHome defaults to clearing the screen to COLOR_OFF (Black) before drawing.
+    // We intercept this and force the buffer to 0x11 (Brilliant White).
+    memset(buffer_, 0x11, 600 * 448 / 2);
   }
 
   void draw_absolute_pixel_internal(int x, int y, Color color) override {
