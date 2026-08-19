@@ -51,6 +51,7 @@ class InkyFrame57 : public display::DisplayBuffer,
 
   void wait_busy(const char* step) {
     ESP_LOGI(TAG, "Waiting for %s...", step);
+    
     delay(50); 
     
     uint32_t start = millis();
@@ -130,13 +131,18 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     this->do_update_();
     
-    // 1. Transmit Image Data BEFORE Powering ON
+    // 1. Power ON (SRAM must be active to receive pixels)
+    ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
+    command(0x04);
+    wait_busy("Power ON");
+
+    // 2. Transmit Image Data
     ESP_LOGI(TAG, "Transmitting buffer to display...");
     command(0x10); 
     digitalWrite(DC_PIN, HIGH);
     this->enable();
     
-    // Chunk the SPI transfer to prevent RP2040 DMA limits from silently dropping the payload
+    // Chunk the SPI transfer into 4KB blocks to bypass the RP2040's 64KB DMA limit
     size_t remaining = 600 * 448 / 2;
     uint8_t *ptr = buffer_;
     while (remaining > 0) {
@@ -144,15 +150,10 @@ class InkyFrame57 : public display::DisplayBuffer,
       this->write_array(ptr, chunk);
       ptr += chunk;
       remaining -= chunk;
-      App.feed_wdt(); // Keep watchdog happy during heavy data transfer
+      App.feed_wdt(); 
     }
     this->disable();
     
-    // 2. Power ON
-    ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
-    command(0x04);
-    wait_busy("Power ON");
-
     // 3. Screen Refresh
     ESP_LOGI(TAG, "Commanding screen refresh...");
     command(0x12); 
