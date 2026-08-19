@@ -64,7 +64,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     command(0x03); data(0x00); // PFS
     command(0x06); data(0xC7); data(0xC7); data(0x1D); // BTST
     command(0x30); data(0x3C); // PLL
-    command(0x40); data(0x00); // TSC (Fixed from 0x41)
+    command(0x41); data(0x00); // TSC (Fixed from 0x41)
     command(0x50); data(0x37); // CDI
     command(0x60); data(0x22); // TCON
     command(0x61); data(0x02); data(0x58); data(0x01); data(0xC0); // TRES 600x448
