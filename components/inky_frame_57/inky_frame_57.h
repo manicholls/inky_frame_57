@@ -12,51 +12,31 @@ static const char *const TAG = "inky_frame_57";
 
 class InkyFrame57 : public display::DisplayBuffer,
                     public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW,
-                                          spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_2MHZ> {
+                                          spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_4MHZ> {
  protected:
   uint8_t *buffer_;
   bool initialised_ = false;
 
-  const int SR_CLK_PIN = 8;
-  const int SR_LATCH_PIN = 9;
-  const int SR_DATA_OUT_PIN = 11;
+  const int CS_PIN = 17; 
+  const int DC_PIN = 28; 
+  const int RST_PIN = 27;
   const int HOLD_VSYS_EN_PIN = 2; 
-
-  // Fast, blocking shift register write
-  void write_sr(bool rst, bool cs, bool dc) {
-    // 0xF8 = 11111000 in binary. 
-    // This forces bits 3-7 HIGH, turning OFF all the Active-LOW LEDs.
-    uint8_t state = 0xF8; 
-    
-    if (rst) state |= (1 << 0);
-    if (cs)  state |= (1 << 1);
-    if (dc)  state |= (1 << 2);
-
-    digitalWrite(SR_LATCH_PIN, LOW);
-    
-    // Shift out MSB first (Bit 7 down to 0)
-    for (int i = 7; i >= 0; i--) {
-      digitalWrite(SR_CLK_PIN, LOW);
-      digitalWrite(SR_DATA_OUT_PIN, (state & (1 << i)) ? HIGH : LOW);
-      digitalWrite(SR_CLK_PIN, HIGH);
-    }
-    
-    digitalWrite(SR_LATCH_PIN, HIGH);
-  }
 
   void command(uint8_t command) {
     this->enable(); // Locks SPI bus
-    write_sr(true, false, false); // CS = LOW, DC = LOW
+    digitalWrite(DC_PIN, LOW);
+    digitalWrite(CS_PIN, LOW); 
     this->write_byte(command);
-    write_sr(true, true, true);   // CS = HIGH, DC = HIGH
+    digitalWrite(CS_PIN, HIGH);
     this->disable(); // Unlocks SPI bus
   }
 
   void data(uint8_t data) {
     this->enable();
-    write_sr(true, false, true); // CS = LOW, DC = HIGH
+    digitalWrite(DC_PIN, HIGH);
+    digitalWrite(CS_PIN, LOW);
     this->write_byte(data);
-    write_sr(true, true, true);  // CS = HIGH, DC = HIGH
+    digitalWrite(CS_PIN, HIGH);
     this->disable();
   }
 
@@ -73,9 +53,9 @@ class InkyFrame57 : public display::DisplayBuffer,
 
   void init_display() {
     ESP_LOGI(TAG, "Starting Hardware Reset...");
-    write_sr(false, true, true); // Pull RESET LOW
+    digitalWrite(RST_PIN, LOW);
     delay(20);
-    write_sr(true, true, true);  // Release RESET HIGH
+    digitalWrite(RST_PIN, HIGH);
     delay(200);
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
@@ -98,12 +78,11 @@ class InkyFrame57 : public display::DisplayBuffer,
     pinMode(HOLD_VSYS_EN_PIN, OUTPUT);
     digitalWrite(HOLD_VSYS_EN_PIN, HIGH);
       
-    pinMode(SR_CLK_PIN, OUTPUT);
-    pinMode(SR_LATCH_PIN, OUTPUT);
-    pinMode(SR_DATA_OUT_PIN, OUTPUT);
+    pinMode(CS_PIN, OUTPUT);
+    digitalWrite(CS_PIN, HIGH);
 
-    // Initialize shift register immediately so LEDs start OFF
-    write_sr(true, true, true); 
+    pinMode(DC_PIN, OUTPUT);
+    pinMode(RST_PIN, OUTPUT);
 
     this->spi_setup();
 
@@ -131,16 +110,18 @@ class InkyFrame57 : public display::DisplayBuffer,
     
     init_display();
     
+    ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
+    command(0x04);
+    wait_busy("Power ON", 1000); 
+
     ESP_LOGI(TAG, "Transmitting buffer to display...");
     
-    this->enable(); // Lock SPI
-    
-    // Send Command 0x10
-    write_sr(true, false, false); // CS LOW, DC LOW
+    this->enable(); // Lock SPI bus
+    digitalWrite(DC_PIN, LOW);
+    digitalWrite(CS_PIN, LOW); // Hold CS manually
     this->write_byte(0x10);
     
-    // Switch to Data mode but KEEP CS LOW!
-    write_sr(true, false, true); // CS LOW, DC HIGH
+    digitalWrite(DC_PIN, HIGH);
     
     size_t remaining = 600 * 448 / 2;
     uint8_t *ptr = buffer_;
@@ -149,18 +130,15 @@ class InkyFrame57 : public display::DisplayBuffer,
       this->write_array(ptr, chunk);
       ptr += chunk;
       remaining -= chunk;
-      
-      // Feed watchdog, but don't yield so ESPHome can't interrupt us
       App.feed_wdt(); 
     }
     
-    write_sr(true, true, true); // Transfer complete, release CS HIGH
-    this->disable(); // Unlock SPI
+    digitalWrite(CS_PIN, HIGH); // Release CS manually
+    this->disable(); // Unlock SPI bus
     
-    ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
-    command(0x04);
-    wait_busy("Power ON", 1000);
-
+    ESP_LOGI(TAG, "Data Stop command...");
+    command(0x11);
+    
     ESP_LOGI(TAG, "Commanding screen refresh...");
     command(0x12); 
     wait_busy("Screen Refresh", 35000); 
