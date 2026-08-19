@@ -44,7 +44,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "Waiting %d ms for %s...", delay_ms, step);
     uint32_t start = millis();
     while (millis() - start < delay_ms) {
-      delay(10); 
+      delay(50);
       App.feed_wdt(); 
       yield(); 
     }
@@ -55,11 +55,10 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "Starting Hardware Reset...");
     digitalWrite(RST_PIN, LOW);
     
-    // Replacing the broken delay() calls with our time-enforced loop
-    wait_busy("Reset LOW pulse", 20); 
-    
+    // RESTORED: Standard blocking delays. No yielding to the Wi-Fi chip!
+    delay(20); 
     digitalWrite(RST_PIN, HIGH);
-    wait_busy("Reset HIGH stabilization", 200); 
+    delay(200);
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
     command(0x00); data(0xEF); data(0x08); 
@@ -110,25 +109,28 @@ class InkyFrame57 : public display::DisplayBuffer,
 
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     
-    // Executes your YAML lambda
-    this->do_update_();
+    // 1. Force the background to Brilliant White natively
+    memset(buffer_, 0x11, 600 * 448 / 2);
     
-    // Alternating heartbeat pixel to defeat the hardware hash check
+    // 2. BRUTAL OVERRIDE: Ignore ESPHome's is_ready() check and force the YAML lambda to run!
+    if (this->writer_local_.has_value()) {
+      (*this->writer_local_)(this);
+    }
+    
+    // 3. Heartbeat Square (Guarantees the hardware hash check sees a change)
     static bool heartbeat_toggle = false;
     heartbeat_toggle = !heartbeat_toggle;
-    uint8_t hb_color = heartbeat_toggle ? 4 : 2; // 4 = Red, 2 = Green
+    uint8_t hb_color = heartbeat_toggle ? 4 : 2; // Red or Green
 
-    for (int y = 0; y < 4; y++) {
-      for (int x = 0; x < 4; x++) {
+    for (int y = 0; y < 10; y++) {
+      for (int x = 0; x < 10; x++) {
         int idx = (y * 600 + x) / 2;
-        if (x % 2 == 0) {
-          buffer_[idx] = (buffer_[idx] & 0x0F) | (hb_color << 4);
-        } else {
-          buffer_[idx] = (buffer_[idx] & 0xF0) | hb_color;
-        }
+        if (x % 2 == 0) buffer_[idx] = (buffer_[idx] & 0x0F) | (hb_color << 4);
+        else buffer_[idx] = (buffer_[idx] & 0xF0) | hb_color;
       }
     }
     
+    // 4. Send to hardware
     init_display();
     
     ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
