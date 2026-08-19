@@ -43,6 +43,7 @@ class InkyFrame57 : public display::DisplayBuffer,
   void wait_busy(const char* step, uint32_t delay_ms) {
     ESP_LOGI(TAG, "Waiting %d ms for %s...", delay_ms, step);
     uint32_t start = millis();
+    // This loop forces the RP2040 to physically wait, defeating the RTOS optimization
     while (millis() - start < delay_ms) {
       delay(10);
       App.feed_wdt(); 
@@ -55,10 +56,10 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "Starting Hardware Reset...");
     digitalWrite(RST_PIN, LOW);
     
-    // RESTORED: The exact, working delays from the Red Stripe version
-    delay(20); 
+    // FORCING the hardware to wake up with wait_busy
+    wait_busy("Reset LOW pulse", 20); 
     digitalWrite(RST_PIN, HIGH);
-    delay(200); 
+    wait_busy("Reset HIGH stabilization", 200); 
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
     command(0x00); data(0xEF); data(0x08); 
@@ -109,10 +110,18 @@ class InkyFrame57 : public display::DisplayBuffer,
 
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     
-    // Calls our hijacked fill() below, then draws your YAML on top
     this->do_update_(); 
     
-    // RESTORED THE EXACT "RED STRIPE" HARDWARE SEQUENCE
+    // MASSIVE Alternating stripe to absolutely guarantee the hardware hash checker 
+    // detects a physical change and fires the refresh cycle.
+    static bool toggle = false;
+    toggle = !toggle;
+    uint8_t hb_color = toggle ? 0x44 : 0x22; // Alternates Red and Green
+    
+    for (size_t i = 30000; i < 45000; i++) {
+        buffer_[i] = hb_color;
+    }
+    
     init_display();
     
     ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
@@ -141,7 +150,6 @@ class InkyFrame57 : public display::DisplayBuffer,
     digitalWrite(CS_PIN, HIGH); 
     this->disable(); 
     
-    // RESTORED: The mandatory Data Stop command that I foolishly deleted!
     ESP_LOGI(TAG, "Data Stop command...");
     command(0x11);
     
@@ -157,20 +165,8 @@ class InkyFrame57 : public display::DisplayBuffer,
   }
 
   void fill(Color color) override {
-    // 1. Force the background to Brilliant White
+    // Hijack ESPHome's internal screen wipe to force White instead of Black
     memset(buffer_, 0x11, 600 * 448 / 2);
-    
-    // 2. Inject a massive alternating Red/Green stripe in the background.
-    // This physically guarantees the screen's hash checker fires a refresh,
-    // and proves to us that the screen is updating.
-    static bool toggle = false;
-    toggle = !toggle;
-    uint8_t hb_color = toggle ? 0x44 : 0x22; // 0x44 = Red, 0x22 = Green
-    
-    // Draw a giant block spanning the entire width of the screen
-    for (size_t i = 30000; i < 45000; i++) {
-        buffer_[i] = hb_color;
-    }
   }
 
   void draw_absolute_pixel_internal(int x, int y, Color color) override {
