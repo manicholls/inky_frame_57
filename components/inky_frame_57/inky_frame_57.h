@@ -59,12 +59,12 @@ class InkyFrame57 : public display::DisplayBuffer,
     delay(200);
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
-    command(0x00); data(0xEF); data(0x08); // PSR (Panel Setting)
+    command(0x00); data(0xEF); data(0x08); // PSR
     command(0x01); data(0x37); data(0x00); data(0x23); data(0x23); // PWR
     command(0x03); data(0x00); // PFS
     command(0x06); data(0xC7); data(0xC7); data(0x1D); // BTST
     command(0x30); data(0x3C); // PLL
-    command(0x41); data(0x00); // TSC (Fixed from 0x41)
+    command(0x40); data(0x00); // TSC 
     command(0x50); data(0x37); // CDI
     command(0x60); data(0x22); // TCON
     command(0x61); data(0x02); data(0x58); data(0x01); data(0xC0); // TRES 600x448
@@ -107,17 +107,6 @@ class InkyFrame57 : public display::DisplayBuffer,
 
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     this->do_update_();
-    
-    // ==========================================
-    // PROOF OF LIFE OVERRIDE
-    // Overwrite whatever ESPHome just drew with a White screen and a Red stripe.
-    // 0x11 = White, 0x44 = Red
-    ESP_LOGI(TAG, "Injecting hardcoded debug pattern...");
-    memset(buffer_, 0x11, 600 * 448 / 2); // Fill white
-    for (size_t i = 30000; i < 45000; i++) {
-        buffer_[i] = 0x44; // Draw a thick red stripe in the middle
-    }
-    // ==========================================
     
     init_display();
     
