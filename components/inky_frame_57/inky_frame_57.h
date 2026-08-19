@@ -23,12 +23,12 @@ class InkyFrame57 : public display::DisplayBuffer,
   const int HOLD_VSYS_EN_PIN = 2; 
 
   void command(uint8_t command) {
-    this->enable(); // Locks SPI bus
+    this->enable(); // Locks SPI bus safely
     digitalWrite(DC_PIN, LOW);
     digitalWrite(CS_PIN, LOW); 
     this->write_byte(command);
     digitalWrite(CS_PIN, HIGH);
-    this->disable(); // Unlocks SPI bus
+    this->disable(); // Unlocks SPI bus safely
   }
 
   void data(uint8_t data) {
@@ -59,16 +59,16 @@ class InkyFrame57 : public display::DisplayBuffer,
     delay(200);
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
-    command(0x01); data(0x37); data(0x00); data(0x23); data(0x23);
-    command(0x00); data(0xEF); data(0x08);
-    command(0x03); data(0x00);
-    command(0x06); data(0xC7); data(0xC7); data(0x1D);
-    command(0x30); data(0x3C);
-    command(0x41); data(0x00);
-    command(0x50); data(0x37);
-    command(0x60); data(0x22);
-    command(0x61); data(0x02); data(0x58); data(0x01); data(0xC0);
-    command(0xE3); data(0xAA);
+    command(0x00); data(0xEF); data(0x08); // PSR (Panel Setting)
+    command(0x01); data(0x37); data(0x00); data(0x23); data(0x23); // PWR
+    command(0x03); data(0x00); // PFS
+    command(0x06); data(0xC7); data(0xC7); data(0x1D); // BTST
+    command(0x30); data(0x3C); // PLL
+    command(0x40); data(0x00); // TSC (Fixed from 0x41)
+    command(0x50); data(0x37); // CDI
+    command(0x60); data(0x22); // TCON
+    command(0x61); data(0x02); data(0x58); data(0x01); data(0xC0); // TRES 600x448
+    command(0xE3); data(0xAA); // PWS
     
     ESP_LOGI(TAG, "Display Initialization Complete!");
   }
@@ -108,11 +108,22 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     this->do_update_();
     
+    // ==========================================
+    // PROOF OF LIFE OVERRIDE
+    // Overwrite whatever ESPHome just drew with a White screen and a Red stripe.
+    // 0x11 = White, 0x44 = Red
+    ESP_LOGI(TAG, "Injecting hardcoded debug pattern...");
+    memset(buffer_, 0x11, 600 * 448 / 2); // Fill white
+    for (size_t i = 30000; i < 45000; i++) {
+        buffer_[i] = 0x44; // Draw a thick red stripe in the middle
+    }
+    // ==========================================
+    
     init_display();
     
     ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
     command(0x04);
-    wait_busy("Power ON", 1000); 
+    wait_busy("Power ON", 2000); 
 
     ESP_LOGI(TAG, "Transmitting buffer to display...");
     
