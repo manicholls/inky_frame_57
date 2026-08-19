@@ -74,11 +74,6 @@ class InkyFrame57 : public display::DisplayBuffer,
   }
 
  public:
-  // Override ESPHome's internal engine to clear the screen to White instead of Black
-  Color get_bg_color() override {
-    return Color(255, 255, 255); 
-  }
-
   void setup() override {
     pinMode(HOLD_VSYS_EN_PIN, OUTPUT);
     digitalWrite(HOLD_VSYS_EN_PIN, HIGH);
