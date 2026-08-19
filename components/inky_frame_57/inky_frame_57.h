@@ -44,7 +44,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "Waiting %d ms for %s...", delay_ms, step);
     uint32_t start = millis();
     while (millis() - start < delay_ms) {
-      delay(50);
+      delay(10); 
       App.feed_wdt(); 
       yield(); 
     }
@@ -54,9 +54,12 @@ class InkyFrame57 : public display::DisplayBuffer,
   void init_display() {
     ESP_LOGI(TAG, "Starting Hardware Reset...");
     digitalWrite(RST_PIN, LOW);
-    delay(20);
+    
+    // Replacing the broken delay() calls with our time-enforced loop
+    wait_busy("Reset LOW pulse", 20); 
+    
     digitalWrite(RST_PIN, HIGH);
-    delay(200);
+    wait_busy("Reset HIGH stabilization", 200); 
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
     command(0x00); data(0xEF); data(0x08); 
@@ -107,19 +110,16 @@ class InkyFrame57 : public display::DisplayBuffer,
 
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     
-    // Executes your YAML lambda (which should start with it.fill(Color(255, 255, 255)); )
+    // Executes your YAML lambda
     this->do_update_();
     
-    // ==========================================
-    // THE ALTERNATING HEARTBEAT
-    // Toggles a 10x10 corner square between Red and Green every cycle.
-    // This physically guarantees the hardware detects a new image and flashes.
+    // Alternating heartbeat pixel to defeat the hardware hash check
     static bool heartbeat_toggle = false;
     heartbeat_toggle = !heartbeat_toggle;
     uint8_t hb_color = heartbeat_toggle ? 4 : 2; // 4 = Red, 2 = Green
 
-    for (int y = 0; y < 10; y++) {
-      for (int x = 0; x < 10; x++) {
+    for (int y = 0; y < 4; y++) {
+      for (int x = 0; x < 4; x++) {
         int idx = (y * 600 + x) / 2;
         if (x % 2 == 0) {
           buffer_[idx] = (buffer_[idx] & 0x0F) | (hb_color << 4);
@@ -128,7 +128,6 @@ class InkyFrame57 : public display::DisplayBuffer,
         }
       }
     }
-    // ==========================================
     
     init_display();
     
