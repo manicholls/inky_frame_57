@@ -26,9 +26,9 @@ class InkyFrame57 : public display::DisplayBuffer,
   const int HOLD_VSYS_EN_PIN = 2; 
 
   void command(uint8_t command) {
-    this->enable(); // Locks SPI bus & sets 4MHz speed safely
+    this->enable(); // Locks SPI bus
     digitalWrite(DC_PIN, LOW);
-    digitalWrite(CS_PIN, LOW); // Manual CS Control
+    digitalWrite(CS_PIN, LOW); 
     this->write_byte(command);
     digitalWrite(CS_PIN, HIGH);
     this->disable(); // Unlocks SPI bus
@@ -49,7 +49,17 @@ class InkyFrame57 : public display::DisplayBuffer,
     digitalWrite(SR_LATCH_PIN, HIGH);
     delayMicroseconds(1);
     
-    return digitalRead(SR_DATA_PIN) == LOW; 
+    // Clock past the first 7 bits (Buttons A-E, RTC, EXT Wake)
+    for (int i = 0; i < 7; i++) {
+      digitalWrite(SR_CLK_PIN, HIGH);
+      delayMicroseconds(1);
+      digitalWrite(SR_CLK_PIN, LOW);
+      delayMicroseconds(1);
+    }
+    
+    // Read the 8th bit (Bit 0 of the register)
+    // The UC8159 Busy pin is Active HIGH (1 = Busy, 0 = Ready).
+    return digitalRead(SR_DATA_PIN) == HIGH; 
   }
 
   void wait_busy(const char* step) {
@@ -142,11 +152,8 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "Transmitting buffer to display...");
     command(0x10); 
     
-    // Lock the SPI bus properly for the massive transmission
     this->enable(); 
     digitalWrite(DC_PIN, HIGH);
-    
-    // Hold CS manually LOW for the entire multi-chunk transaction
     digitalWrite(CS_PIN, LOW);
     
     size_t remaining = 600 * 448 / 2;
@@ -161,9 +168,8 @@ class InkyFrame57 : public display::DisplayBuffer,
       App.feed_wdt(); 
     }
     
-    // Release CS manually
     digitalWrite(CS_PIN, HIGH);
-    this->disable(); // Unlock the SPI bus
+    this->disable(); 
     
     ESP_LOGI(TAG, "Commanding screen refresh...");
     command(0x12); 
