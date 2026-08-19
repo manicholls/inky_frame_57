@@ -20,7 +20,7 @@ class InkyFrame57 : public display::DisplayBuffer,
   const int CS_PIN = 17; 
   const int DC_PIN = 28; 
   const int RST_PIN = 27;
-  const int BUSY_PIN = 26; // <-- THE MISSING LINK
+  const int BUSY_PIN = 26; 
   const int HOLD_VSYS_EN_PIN = 2; 
 
   void command(uint8_t command) {
@@ -41,13 +41,26 @@ class InkyFrame57 : public display::DisplayBuffer,
     this->disable();
   }
 
-  // Instead of guessing times, we listen to the actual hardware
+  // GUARANTEED blocking delay that ignores the broken background yielding
+  void delay_blocking(uint32_t ms) {
+    uint32_t start = millis();
+    while (millis() - start < ms) {
+      App.feed_wdt();
+      yield();
+    }
+  }
+
   void wait_until_idle(const char* step) {
     ESP_LOGI(TAG, "Waiting for hardware: %s...", step);
-    // UC8159 pulls BUSY pin LOW when it is working, and releases it HIGH when ready
+    
+    // RACE CONDITION FIX: The e-ink controller takes a few milliseconds 
+    // to process the SPI command and physically pull the BUSY pin LOW. 
+    // We MUST wait 50ms before checking the pin, otherwise we read HIGH 
+    // instantly and accidentally abort the wait!
+    delay_blocking(50); 
+    
     while (digitalRead(BUSY_PIN) == LOW) {
-      delay(10);
-      App.feed_wdt(); 
+      delay_blocking(50);
     }
     ESP_LOGI(TAG, "%s complete!", step);
   }
@@ -55,9 +68,11 @@ class InkyFrame57 : public display::DisplayBuffer,
   void init_display() {
     ESP_LOGI(TAG, "Starting Hardware Reset...");
     digitalWrite(RST_PIN, LOW);
-    delay(20); 
+    
+    // Using our guaranteed delay so the reset pulse is actually sent
+    delay_blocking(20); 
     digitalWrite(RST_PIN, HIGH);
-    delay(200); 
+    delay_blocking(200); 
 
     wait_until_idle("Reset Stabilization");
 
@@ -86,7 +101,7 @@ class InkyFrame57 : public display::DisplayBuffer,
 
     pinMode(DC_PIN, OUTPUT);
     pinMode(RST_PIN, OUTPUT);
-    pinMode(BUSY_PIN, INPUT); // Initialize the BUSY pin
+    pinMode(BUSY_PIN, INPUT);
 
     this->spi_setup();
 
@@ -112,6 +127,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     this->do_update_(); 
     
+    // Massive Alternating Stripe to guarantee a visual change on the panel
     static bool toggle = false;
     toggle = !toggle;
     uint8_t hb_color = toggle ? 0x44 : 0x22; 
@@ -124,7 +140,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     
     ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
     command(0x04);
-    wait_until_idle("Power ON"); // Let the hardware tell us when it's ready
+    wait_until_idle("Power ON"); 
 
     ESP_LOGI(TAG, "Transmitting buffer to display...");
     
@@ -153,7 +169,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     
     ESP_LOGI(TAG, "Commanding screen refresh...");
     command(0x12); 
-    wait_until_idle("Screen Refresh"); // Wait exactly as long as the screen needs!
+    wait_until_idle("Screen Refresh"); 
 
     ESP_LOGI(TAG, "Powering OFF E-Ink Panel...");
     command(0x02);
