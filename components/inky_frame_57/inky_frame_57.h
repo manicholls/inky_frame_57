@@ -12,12 +12,12 @@ static const char *const TAG = "inky_frame_57";
 
 class InkyFrame57 : public display::DisplayBuffer,
                     public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW,
-                                          spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_10MHZ> {
+                                          spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_4MHZ> {
  protected:
   uint8_t *buffer_;
   bool initialised_ = false;
 
-  const int DC_PIN = 16;
+  const int DC_PIN = 28;
   const int RST_PIN = 27;
   const int SR_CLK_PIN = 8;
   const int SR_LATCH_PIN = 9;
