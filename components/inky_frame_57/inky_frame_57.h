@@ -54,9 +54,11 @@ class InkyFrame57 : public display::DisplayBuffer,
   void init_display() {
     ESP_LOGI(TAG, "Starting Hardware Reset...");
     digitalWrite(RST_PIN, LOW);
-    wait_busy("Reset LOW pulse", 20); 
+    
+    // RESTORED: The exact, working delays from the Red Stripe version
+    delay(20); 
     digitalWrite(RST_PIN, HIGH);
-    wait_busy("Reset HIGH stabilization", 200); 
+    delay(200); 
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
     command(0x00); data(0xEF); data(0x08); 
@@ -107,20 +109,10 @@ class InkyFrame57 : public display::DisplayBuffer,
 
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     
+    // Calls our hijacked fill() below, then draws your YAML on top
     this->do_update_(); 
     
-    static bool heartbeat_toggle = false;
-    heartbeat_toggle = !heartbeat_toggle;
-    uint8_t hb_color = heartbeat_toggle ? 4 : 1; 
-
-    for (int y = 0; y < 50; y++) {
-      for (int x = 0; x < 50; x++) {
-        int idx = (y * 600 + x) / 2;
-        if (x % 2 == 0) buffer_[idx] = (buffer_[idx] & 0x0F) | (hb_color << 4);
-        else buffer_[idx] = (buffer_[idx] & 0xF0) | hb_color;
-      }
-    }
-    
+    // RESTORED THE EXACT "RED STRIPE" HARDWARE SEQUENCE
     init_display();
     
     ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
@@ -149,7 +141,9 @@ class InkyFrame57 : public display::DisplayBuffer,
     digitalWrite(CS_PIN, HIGH); 
     this->disable(); 
     
-    // DELETED THE 0x11 COMMAND THAT KILLED THE REFRESH
+    // RESTORED: The mandatory Data Stop command that I foolishly deleted!
+    ESP_LOGI(TAG, "Data Stop command...");
+    command(0x11);
     
     ESP_LOGI(TAG, "Commanding screen refresh...");
     command(0x12); 
@@ -163,7 +157,20 @@ class InkyFrame57 : public display::DisplayBuffer,
   }
 
   void fill(Color color) override {
+    // 1. Force the background to Brilliant White
     memset(buffer_, 0x11, 600 * 448 / 2);
+    
+    // 2. Inject a massive alternating Red/Green stripe in the background.
+    // This physically guarantees the screen's hash checker fires a refresh,
+    // and proves to us that the screen is updating.
+    static bool toggle = false;
+    toggle = !toggle;
+    uint8_t hb_color = toggle ? 0x44 : 0x22; // 0x44 = Red, 0x22 = Green
+    
+    // Draw a giant block spanning the entire width of the screen
+    for (size_t i = 30000; i < 45000; i++) {
+        buffer_[i] = hb_color;
+    }
   }
 
   void draw_absolute_pixel_internal(int x, int y, Color color) override {
