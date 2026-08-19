@@ -54,9 +54,11 @@ class InkyFrame57 : public display::DisplayBuffer,
   void init_display() {
     ESP_LOGI(TAG, "Starting Hardware Reset...");
     digitalWrite(RST_PIN, LOW);
-    wait_busy("Reset LOW pulse", 20); 
+    
+    // RESTORED: Standard delay to prevent yielding/crashing during hardware reset
+    delay(20); 
     digitalWrite(RST_PIN, HIGH);
-    wait_busy("Reset HIGH stabilization", 200); 
+    delay(200); 
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
     command(0x00); data(0xEF); data(0x08); 
@@ -70,8 +72,6 @@ class InkyFrame57 : public display::DisplayBuffer,
     command(0x61); data(0x02); data(0x58); data(0x01); data(0xC0); 
     command(0xE3); data(0xAA); 
     
-    // Crucial 100ms stabilization wait from the Pimoroni driver
-    wait_busy("Init Stabilization", 100); 
     ESP_LOGI(TAG, "Display Initialization Complete!");
   }
 
@@ -108,8 +108,12 @@ class InkyFrame57 : public display::DisplayBuffer,
     if (!initialised_) return;
 
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
+    
+    // 1. ESPHome clears the buffer. Our hijacked fill() forces it to Brilliant White.
+    // 2. It then perfectly executes your YAML graphics.
     this->do_update_(); 
     
+    // 3. The Alternating Hash Defeat (50x50 corner block)
     static bool heartbeat_toggle = false;
     heartbeat_toggle = !heartbeat_toggle;
     uint8_t hb_color = heartbeat_toggle ? 4 : 1; 
@@ -122,17 +126,21 @@ class InkyFrame57 : public display::DisplayBuffer,
       }
     }
     
+    // RESTORED THE EXACT "RED STRIPE" HARDWARE SEQUENCE
     init_display();
     
-    // SEQUENCE FIX: Image Data MUST be sent BEFORE Power ON
+    ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
+    command(0x04);
+    wait_busy("Power ON", 2000); 
+
     ESP_LOGI(TAG, "Transmitting buffer to display...");
-    this->enable(); 
-    digitalWrite(DC_PIN, LOW); // Command Mode
-    digitalWrite(CS_PIN, LOW); // CS goes LOW and STAYS LOW
     
+    this->enable(); 
+    digitalWrite(DC_PIN, LOW);
+    digitalWrite(CS_PIN, LOW); 
     this->write_byte(0x10);
     
-    digitalWrite(DC_PIN, HIGH); // Switch to Data Mode (CS remains LOW)
+    digitalWrite(DC_PIN, HIGH);
     
     size_t remaining = 600 * 448 / 2;
     uint8_t *ptr = buffer_;
@@ -144,14 +152,12 @@ class InkyFrame57 : public display::DisplayBuffer,
       App.feed_wdt(); 
     }
     
-    digitalWrite(CS_PIN, HIGH); // Release CS only after all 134KB are sent
+    digitalWrite(CS_PIN, HIGH); 
     this->disable(); 
     
-    // SEQUENCE FIX: Now that data is loaded, turn on the charge pump
-    ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
-    command(0x04);
-    wait_busy("Power ON", 200); 
-
+    ESP_LOGI(TAG, "Data Stop command...");
+    command(0x11);
+    
     ESP_LOGI(TAG, "Commanding screen refresh...");
     command(0x12); 
     wait_busy("Screen Refresh", 35000); 
@@ -164,6 +170,7 @@ class InkyFrame57 : public display::DisplayBuffer,
   }
 
   void fill(Color color) override {
+    // Hijack ESPHome's internal screen wipe to force White instead of Black
     memset(buffer_, 0x11, 600 * 448 / 2);
   }
 
