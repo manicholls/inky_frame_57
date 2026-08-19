@@ -95,12 +95,11 @@ class InkyFrame57 : public display::DisplayBuffer,
             return; 
         }
         
+        // 0x11 is Brilliant White
         memset(buffer_, 0x11, 600 * 448 / 2); 
         ESP_LOGI(TAG, "Buffer allocated successfully.");
         
         initialised_ = true;
-        // Removed the boot-crashing update call! 
-        // The display will naturally refresh 60 seconds after boot.
     });
   }
 
@@ -109,20 +108,12 @@ class InkyFrame57 : public display::DisplayBuffer,
 
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     
-    // 1. ESPHome clears the buffer to Black, then draws your YAML lambda graphics
-    this->do_update_();
+    // 1. Brutally force the background to White before drawing
+    memset(buffer_, 0x11, 600 * 448 / 2);
     
-    // 2. We inject a 10x10 Red square in the top left corner to guarantee the 
-    // e-ink controller sees a change and physically flashes the screen.
-    for (int y = 0; y < 10; y++) {
-      for (int x = 0; x < 10; x++) {
-        int idx = (y * 600 + x) / 2;
-        if (x % 2 == 0) buffer_[idx] = (buffer_[idx] & 0x0F) | (4 << 4);
-        else buffer_[idx] = (buffer_[idx] & 0xF0) | 4;
-      }
-    }
+    // 2. Bypass ESPHome's internal safety checks and force your YAML lambda to execute
+    this->draw_pixels_();
     
-    // 3. Re-initialize and transmit to the hardware
     init_display();
     
     ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
