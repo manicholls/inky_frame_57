@@ -17,7 +17,6 @@ class InkyFrame57 : public display::DisplayBuffer,
   uint8_t *buffer_;
   bool initialised_ = false;
 
-  // Manually managed pins
   const int CS_PIN = 17; 
   const int DC_PIN = 28; 
   const int RST_PIN = 27;
@@ -27,17 +26,21 @@ class InkyFrame57 : public display::DisplayBuffer,
   const int HOLD_VSYS_EN_PIN = 2; 
 
   void command(uint8_t command) {
+    this->enable(); // Locks SPI bus & sets 4MHz speed safely
     digitalWrite(DC_PIN, LOW);
     digitalWrite(CS_PIN, LOW); // Manual CS Control
-    this->transfer_byte(command);
+    this->write_byte(command);
     digitalWrite(CS_PIN, HIGH);
+    this->disable(); // Unlocks SPI bus
   }
 
   void data(uint8_t data) {
+    this->enable();
     digitalWrite(DC_PIN, HIGH);
     digitalWrite(CS_PIN, LOW);
-    this->transfer_byte(data);
+    this->write_byte(data);
     digitalWrite(CS_PIN, HIGH);
+    this->disable();
   }
 
   bool is_busy() {
@@ -45,17 +48,21 @@ class InkyFrame57 : public display::DisplayBuffer,
     delayMicroseconds(1);
     digitalWrite(SR_LATCH_PIN, HIGH);
     delayMicroseconds(1);
+    
     return digitalRead(SR_DATA_PIN) == LOW; 
   }
 
   void wait_busy(const char* step) {
     ESP_LOGI(TAG, "Waiting for %s...", step);
+    
     delay(50); 
+    
     uint32_t start = millis();
     while (is_busy()) {
       delay(50);
       App.feed_wdt(); 
       yield(); 
+      
       if (millis() - start > 45000) {
         ESP_LOGE(TAG, "TIMEOUT waiting for %s!", step);
         break;
@@ -134,9 +141,12 @@ class InkyFrame57 : public display::DisplayBuffer,
 
     ESP_LOGI(TAG, "Transmitting buffer to display...");
     command(0x10); 
+    
+    // Lock the SPI bus properly for the massive transmission
+    this->enable(); 
     digitalWrite(DC_PIN, HIGH);
     
-    // Lock CS manually for the entire multi-chunk transmission
+    // Hold CS manually LOW for the entire multi-chunk transaction
     digitalWrite(CS_PIN, LOW);
     
     size_t remaining = 600 * 448 / 2;
@@ -144,7 +154,6 @@ class InkyFrame57 : public display::DisplayBuffer,
     while (remaining > 0) {
       size_t chunk = remaining > 4096 ? 4096 : remaining;
       
-      // ESPHome's write_array no longer touches CS because it's not in YAML
       this->write_array(ptr, chunk);
       
       ptr += chunk;
@@ -152,8 +161,9 @@ class InkyFrame57 : public display::DisplayBuffer,
       App.feed_wdt(); 
     }
     
-    // Release CS
+    // Release CS manually
     digitalWrite(CS_PIN, HIGH);
+    this->disable(); // Unlock the SPI bus
     
     ESP_LOGI(TAG, "Commanding screen refresh...");
     command(0x12); 
