@@ -27,14 +27,15 @@ class InkyFrame57 : public display::DisplayBuffer,
   void command(uint8_t command) {
     digitalWrite(DC_PIN, LOW);
     this->enable();
-    this->transfer_byte(command);
+    // Bypass SPIDevice wrapper to prevent double-toggling the CS pin
+    this->parent_->write_byte(command);
     this->disable();
   }
 
   void data(uint8_t data) {
     digitalWrite(DC_PIN, HIGH);
     this->enable();
-    this->transfer_byte(data);
+    this->parent_->write_byte(data);
     this->disable();
   }
 
@@ -44,8 +45,6 @@ class InkyFrame57 : public display::DisplayBuffer,
     digitalWrite(SR_LATCH_PIN, HIGH);
     delayMicroseconds(1);
     
-    // D7 (Busy) is output immediately. No clock pulses needed.
-    // Active LOW (0 = busy).
     return digitalRead(SR_DATA_PIN) == LOW; 
   }
 
@@ -140,18 +139,24 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "Transmitting buffer to display...");
     command(0x10); 
     digitalWrite(DC_PIN, HIGH);
+    
+    // Lock CS LOW manually for the entire 134KB transaction
     this->enable();
     
-    // Chunk the SPI transfer into 4KB blocks to bypass the RP2040's 64KB DMA limit
     size_t remaining = 600 * 448 / 2;
     uint8_t *ptr = buffer_;
     while (remaining > 0) {
       size_t chunk = remaining > 4096 ? 4096 : remaining;
-      this->write_array(ptr, chunk);
+      
+      // Write directly to the underlying bus to prevent CS flapping
+      this->parent_->write_array(ptr, chunk);
+      
       ptr += chunk;
       remaining -= chunk;
       App.feed_wdt(); 
     }
+    
+    // Release CS HIGH only after all 134KB are successfully received
     this->disable();
     
     // 3. Screen Refresh
