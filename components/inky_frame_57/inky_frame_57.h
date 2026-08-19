@@ -20,6 +20,7 @@ class InkyFrame57 : public display::DisplayBuffer,
   const int CS_PIN = 17; 
   const int DC_PIN = 28; 
   const int RST_PIN = 27;
+  const int BUSY_PIN = 26; // <-- THE MISSING LINK
   const int HOLD_VSYS_EN_PIN = 2; 
 
   void command(uint8_t command) {
@@ -40,14 +41,13 @@ class InkyFrame57 : public display::DisplayBuffer,
     this->disable();
   }
 
-  void wait_busy(const char* step, uint32_t delay_ms) {
-    ESP_LOGI(TAG, "Waiting %d ms for %s...", delay_ms, step);
-    uint32_t start = millis();
-    // This loop forces the RP2040 to physically wait, defeating the RTOS optimization
-    while (millis() - start < delay_ms) {
+  // Instead of guessing times, we listen to the actual hardware
+  void wait_until_idle(const char* step) {
+    ESP_LOGI(TAG, "Waiting for hardware: %s...", step);
+    // UC8159 pulls BUSY pin LOW when it is working, and releases it HIGH when ready
+    while (digitalRead(BUSY_PIN) == LOW) {
       delay(10);
       App.feed_wdt(); 
-      yield(); 
     }
     ESP_LOGI(TAG, "%s complete!", step);
   }
@@ -55,11 +55,11 @@ class InkyFrame57 : public display::DisplayBuffer,
   void init_display() {
     ESP_LOGI(TAG, "Starting Hardware Reset...");
     digitalWrite(RST_PIN, LOW);
-    
-    // FORCING the hardware to wake up with wait_busy
-    wait_busy("Reset LOW pulse", 20); 
+    delay(20); 
     digitalWrite(RST_PIN, HIGH);
-    wait_busy("Reset HIGH stabilization", 200); 
+    delay(200); 
+
+    wait_until_idle("Reset Stabilization");
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
     command(0x00); data(0xEF); data(0x08); 
@@ -86,6 +86,7 @@ class InkyFrame57 : public display::DisplayBuffer,
 
     pinMode(DC_PIN, OUTPUT);
     pinMode(RST_PIN, OUTPUT);
+    pinMode(BUSY_PIN, INPUT); // Initialize the BUSY pin
 
     this->spi_setup();
 
@@ -109,15 +110,12 @@ class InkyFrame57 : public display::DisplayBuffer,
     if (!initialised_) return;
 
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
-    
     this->do_update_(); 
     
-    // MASSIVE Alternating stripe to absolutely guarantee the hardware hash checker 
-    // detects a physical change and fires the refresh cycle.
     static bool toggle = false;
     toggle = !toggle;
-    uint8_t hb_color = toggle ? 0x44 : 0x22; // Alternates Red and Green
-    
+    uint8_t hb_color = toggle ? 0x44 : 0x22; 
+
     for (size_t i = 30000; i < 45000; i++) {
         buffer_[i] = hb_color;
     }
@@ -126,7 +124,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     
     ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
     command(0x04);
-    wait_busy("Power ON", 2000); 
+    wait_until_idle("Power ON"); // Let the hardware tell us when it's ready
 
     ESP_LOGI(TAG, "Transmitting buffer to display...");
     
@@ -155,17 +153,16 @@ class InkyFrame57 : public display::DisplayBuffer,
     
     ESP_LOGI(TAG, "Commanding screen refresh...");
     command(0x12); 
-    wait_busy("Screen Refresh", 35000); 
+    wait_until_idle("Screen Refresh"); // Wait exactly as long as the screen needs!
 
     ESP_LOGI(TAG, "Powering OFF E-Ink Panel...");
     command(0x02);
-    wait_busy("Power OFF", 1000);
+    wait_until_idle("Power OFF");
 
     ESP_LOGI(TAG, "Update sequence complete.");
   }
 
   void fill(Color color) override {
-    // Hijack ESPHome's internal screen wipe to force White instead of Black
     memset(buffer_, 0x11, 600 * 448 / 2);
   }
 
