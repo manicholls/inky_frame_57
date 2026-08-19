@@ -20,7 +20,6 @@ class InkyFrame57 : public display::DisplayBuffer,
   const int CS_PIN = 17; 
   const int DC_PIN = 28; 
   const int RST_PIN = 27;
-  const int BUSY_PIN = 26; 
   const int HOLD_VSYS_EN_PIN = 2; 
 
   void command(uint8_t command) {
@@ -41,26 +40,15 @@ class InkyFrame57 : public display::DisplayBuffer,
     this->disable();
   }
 
-  // GUARANTEED blocking delay that ignores the broken background yielding
-  void delay_blocking(uint32_t ms) {
+  // GUARANTEED blocking delay. This defeats the RTOS yielding bug.
+  // It forces the hardware to obey the exact millisecond timing.
+  void delay_blocking(const char* step, uint32_t delay_ms) {
+    ESP_LOGI(TAG, "Waiting %d ms for %s...", delay_ms, step);
     uint32_t start = millis();
-    while (millis() - start < ms) {
-      App.feed_wdt();
-      yield();
-    }
-  }
-
-  void wait_until_idle(const char* step) {
-    ESP_LOGI(TAG, "Waiting for hardware: %s...", step);
-    
-    // RACE CONDITION FIX: The e-ink controller takes a few milliseconds 
-    // to process the SPI command and physically pull the BUSY pin LOW. 
-    // We MUST wait 50ms before checking the pin, otherwise we read HIGH 
-    // instantly and accidentally abort the wait!
-    delay_blocking(50); 
-    
-    while (digitalRead(BUSY_PIN) == LOW) {
-      delay_blocking(50);
+    while (millis() - start < delay_ms) {
+      delay(10);
+      App.feed_wdt(); 
+      yield(); 
     }
     ESP_LOGI(TAG, "%s complete!", step);
   }
@@ -68,13 +56,9 @@ class InkyFrame57 : public display::DisplayBuffer,
   void init_display() {
     ESP_LOGI(TAG, "Starting Hardware Reset...");
     digitalWrite(RST_PIN, LOW);
-    
-    // Using our guaranteed delay so the reset pulse is actually sent
-    delay_blocking(20); 
+    delay_blocking("Reset LOW pulse", 20); 
     digitalWrite(RST_PIN, HIGH);
-    delay_blocking(200); 
-
-    wait_until_idle("Reset Stabilization");
+    delay_blocking("Reset HIGH stabilization", 200); 
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
     command(0x00); data(0xEF); data(0x08); 
@@ -101,7 +85,6 @@ class InkyFrame57 : public display::DisplayBuffer,
 
     pinMode(DC_PIN, OUTPUT);
     pinMode(RST_PIN, OUTPUT);
-    pinMode(BUSY_PIN, INPUT);
 
     this->spi_setup();
 
@@ -125,22 +108,16 @@ class InkyFrame57 : public display::DisplayBuffer,
     if (!initialised_) return;
 
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
-    this->do_update_(); 
     
-    // Massive Alternating Stripe to guarantee a visual change on the panel
-    static bool toggle = false;
-    toggle = !toggle;
-    uint8_t hb_color = toggle ? 0x44 : 0x22; 
-
-    for (size_t i = 30000; i < 45000; i++) {
-        buffer_[i] = hb_color;
-    }
+    // Calls our hijacked fill() below to force a white background and the stripe, 
+    // and THEN natively executes your YAML graphics over top of it.
+    this->do_update_(); 
     
     init_display();
     
     ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
     command(0x04);
-    wait_until_idle("Power ON"); 
+    delay_blocking("Power ON", 2000); 
 
     ESP_LOGI(TAG, "Transmitting buffer to display...");
     
@@ -169,17 +146,29 @@ class InkyFrame57 : public display::DisplayBuffer,
     
     ESP_LOGI(TAG, "Commanding screen refresh...");
     command(0x12); 
-    wait_until_idle("Screen Refresh"); 
+    delay_blocking("Screen Refresh", 35000); 
 
     ESP_LOGI(TAG, "Powering OFF E-Ink Panel...");
     command(0x02);
-    wait_until_idle("Power OFF");
+    delay_blocking("Power OFF", 1000);
 
     ESP_LOGI(TAG, "Update sequence complete.");
   }
 
   void fill(Color color) override {
+    // 1. Force the background to Brilliant White
     memset(buffer_, 0x11, 600 * 448 / 2);
+    
+    // 2. Inject a massive alternating Red/Green stripe in the background.
+    // This physically guarantees the screen's hash checker fires a refresh.
+    static bool toggle = false;
+    toggle = !toggle;
+    uint8_t hb_color = toggle ? 0x44 : 0x22; 
+    
+    // Draw a giant block spanning the entire width of the screen
+    for (size_t i = 30000; i < 45000; i++) {
+        buffer_[i] = hb_color;
+    }
   }
 
   void draw_absolute_pixel_internal(int x, int y, Color color) override {
