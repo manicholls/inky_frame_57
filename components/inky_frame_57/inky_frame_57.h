@@ -20,14 +20,13 @@ class InkyFrame57 : public display::DisplayBuffer,
   const int CS_PIN = 17; 
   const int DC_PIN = 28; 
   const int RST_PIN = 27;
-  const int BUSY_PIN = 26; // THE SMOKING GUN: Dedicated hardware pin
   const int HOLD_VSYS_EN_PIN = 2; 
 
   void command(uint8_t command) {
-    this->enable(); // Locks SPI bus
+    this->enable(); // Locks SPI bus safely
     digitalWrite(DC_PIN, LOW);
     digitalWrite(CS_PIN, LOW); 
-    this->transfer_byte(command);
+    this->write_byte(command);
     digitalWrite(CS_PIN, HIGH);
     this->disable(); // Unlocks SPI bus
   }
@@ -36,30 +35,21 @@ class InkyFrame57 : public display::DisplayBuffer,
     this->enable();
     digitalWrite(DC_PIN, HIGH);
     digitalWrite(CS_PIN, LOW);
-    this->transfer_byte(data);
+    this->write_byte(data);
     digitalWrite(CS_PIN, HIGH);
     this->disable();
   }
 
-  void wait_busy(const char* step) {
-    ESP_LOGI(TAG, "Waiting for %s...", step);
-    
-    delay(50); // Give the controller time to assert the pin
-    
+  // Pure time-based wait, as the 5.7" has no physical busy pin connected
+  void wait_busy(const char* step, uint32_t delay_ms) {
+    ESP_LOGI(TAG, "Waiting %d ms for %s...", delay_ms, step);
     uint32_t start = millis();
-    
-    // UC8159 pulls GPIO 26 LOW when it is busy drawing
-    while (digitalRead(BUSY_PIN) == LOW) {
+    while (millis() - start < delay_ms) {
       delay(50);
-      App.feed_wdt(); 
+      App.feed_wdt(); // Keeps ESPHome alive during the 35s refresh
       yield(); 
-      
-      if (millis() - start > 45000) {
-        ESP_LOGE(TAG, "TIMEOUT waiting for %s!", step);
-        break;
-      }
     }
-    ESP_LOGI(TAG, "%s complete! Took %d ms", step, millis() - start);
+    ESP_LOGI(TAG, "%s complete!", step);
   }
 
   void init_display() {
@@ -68,8 +58,6 @@ class InkyFrame57 : public display::DisplayBuffer,
     delay(20);
     digitalWrite(RST_PIN, HIGH);
     delay(200);
-
-    wait_busy("Hardware Reset");
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
     command(0x01); data(0x37); data(0x00); data(0x23); data(0x23);
@@ -97,9 +85,6 @@ class InkyFrame57 : public display::DisplayBuffer,
 
     pinMode(DC_PIN, OUTPUT);
     pinMode(RST_PIN, OUTPUT);
-    
-    // Explicitly configure the dedicated BUSY pin
-    pinMode(BUSY_PIN, INPUT);
 
     this->spi_setup();
 
@@ -126,6 +111,12 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     this->do_update_();
     
+    // 1. Power ON
+    ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
+    command(0x04);
+    wait_busy("Power ON", 1000);
+
+    // 2. Transmit Image Data
     ESP_LOGI(TAG, "Transmitting buffer to display...");
     command(0x10); 
     
@@ -133,7 +124,6 @@ class InkyFrame57 : public display::DisplayBuffer,
     digitalWrite(DC_PIN, HIGH);
     digitalWrite(CS_PIN, LOW); // Hold CS manually
     
-    // Chunked burst write for massive speed without DMA errors
     size_t remaining = 600 * 448 / 2;
     uint8_t *ptr = buffer_;
     while (remaining > 0) {
@@ -144,20 +134,18 @@ class InkyFrame57 : public display::DisplayBuffer,
       App.feed_wdt(); 
     }
     
-    digitalWrite(CS_PIN, HIGH);
+    digitalWrite(CS_PIN, HIGH); // Release CS
     this->disable(); // Unlock SPI
     
-    ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
-    command(0x04);
-    wait_busy("Power ON");
-
+    // 3. Screen Refresh
     ESP_LOGI(TAG, "Commanding screen refresh...");
     command(0x12); 
-    wait_busy("Screen Refresh");
+    wait_busy("Screen Refresh", 35000); // Strict 35-second hardware wait
 
+    // 4. Power OFF (Burn-in protection)
     ESP_LOGI(TAG, "Powering OFF E-Ink Panel...");
     command(0x02);
-    wait_busy("Power OFF");
+    wait_busy("Power OFF", 1000);
 
     ESP_LOGI(TAG, "Update sequence complete.");
   }
