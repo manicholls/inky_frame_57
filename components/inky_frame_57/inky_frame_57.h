@@ -27,7 +27,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     digitalWrite(DC_PIN, LOW);
     digitalWrite(CS_PIN, LOW); 
     this->write_byte(command);
-    digitalWrite(CS_PIN, HIGH); // The critical pulse!
+    digitalWrite(CS_PIN, HIGH);
     this->disable(); 
   }
 
@@ -70,6 +70,8 @@ class InkyFrame57 : public display::DisplayBuffer,
     command(0x61); data(0x02); data(0x58); data(0x01); data(0xC0); 
     command(0xE3); data(0xAA); 
     
+    // Crucial 100ms stabilization wait from the Pimoroni driver
+    wait_busy("Init Stabilization", 100); 
     ESP_LOGI(TAG, "Display Initialization Complete!");
   }
 
@@ -106,7 +108,6 @@ class InkyFrame57 : public display::DisplayBuffer,
     if (!initialised_) return;
 
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
-    
     this->do_update_(); 
     
     static bool heartbeat_toggle = false;
@@ -123,19 +124,15 @@ class InkyFrame57 : public display::DisplayBuffer,
     
     init_display();
     
-    ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
-    command(0x04);
-    wait_busy("Power ON", 2000); 
-
+    // SEQUENCE FIX: Image Data MUST be sent BEFORE Power ON
     ESP_LOGI(TAG, "Transmitting buffer to display...");
-    
-    // FIXED: Use the command() helper so CS physically pulses HIGH!
-    command(0x10);
-    
-    // Now lock SPI and pull CS LOW for the continuous data stream
     this->enable(); 
-    digitalWrite(DC_PIN, HIGH);
-    digitalWrite(CS_PIN, LOW); 
+    digitalWrite(DC_PIN, LOW); // Command Mode
+    digitalWrite(CS_PIN, LOW); // CS goes LOW and STAYS LOW
+    
+    this->write_byte(0x10);
+    
+    digitalWrite(DC_PIN, HIGH); // Switch to Data Mode (CS remains LOW)
     
     size_t remaining = 600 * 448 / 2;
     uint8_t *ptr = buffer_;
@@ -147,12 +144,14 @@ class InkyFrame57 : public display::DisplayBuffer,
       App.feed_wdt(); 
     }
     
-    digitalWrite(CS_PIN, HIGH); 
+    digitalWrite(CS_PIN, HIGH); // Release CS only after all 134KB are sent
     this->disable(); 
     
-    ESP_LOGI(TAG, "Data Stop command...");
-    command(0x11);
-    
+    // SEQUENCE FIX: Now that data is loaded, turn on the charge pump
+    ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
+    command(0x04);
+    wait_busy("Power ON", 200); 
+
     ESP_LOGI(TAG, "Commanding screen refresh...");
     command(0x12); 
     wait_busy("Screen Refresh", 35000); 
