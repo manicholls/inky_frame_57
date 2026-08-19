@@ -43,7 +43,6 @@ class InkyFrame57 : public display::DisplayBuffer,
   void wait_busy(const char* step, uint32_t delay_ms) {
     ESP_LOGI(TAG, "Waiting %d ms for %s...", delay_ms, step);
     uint32_t start = millis();
-    // This strict while-loop prevents the RTOS from exiting the delay early
     while (millis() - start < delay_ms) {
       delay(10);
       App.feed_wdt(); 
@@ -55,8 +54,6 @@ class InkyFrame57 : public display::DisplayBuffer,
   void init_display() {
     ESP_LOGI(TAG, "Starting Hardware Reset...");
     digitalWrite(RST_PIN, LOW);
-    
-    // RESTORED: time-enforced wait loops to guarantee the hardware actually resets
     wait_busy("Reset LOW pulse", 20); 
     digitalWrite(RST_PIN, HIGH);
     wait_busy("Reset HIGH stabilization", 200); 
@@ -112,10 +109,9 @@ class InkyFrame57 : public display::DisplayBuffer,
     
     this->do_update_(); 
     
-    // Toggling 50x50 corner block to defeat the hardware hash checker
     static bool heartbeat_toggle = false;
     heartbeat_toggle = !heartbeat_toggle;
-    uint8_t hb_color = heartbeat_toggle ? 4 : 2; // Alternates Red (4) and Green (2)
+    uint8_t hb_color = heartbeat_toggle ? 4 : 1; 
 
     for (int y = 0; y < 50; y++) {
       for (int x = 0; x < 50; x++) {
@@ -153,8 +149,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     digitalWrite(CS_PIN, HIGH); 
     this->disable(); 
     
-    ESP_LOGI(TAG, "Data Stop command...");
-    command(0x11);
+    // DELETED THE 0x11 COMMAND THAT KILLED THE REFRESH
     
     ESP_LOGI(TAG, "Commanding screen refresh...");
     command(0x12); 
@@ -168,17 +163,7 @@ class InkyFrame57 : public display::DisplayBuffer,
   }
 
   void fill(Color color) override {
-    uint8_t c = 1; 
-    if (color.r < 50 && color.g < 50 && color.b < 50) c = 0; 
-    else if (color.r > 200 && color.g > 200 && color.b > 200) c = 1; 
-    else if (color.r < 100 && color.g > 150 && color.b < 100) c = 2; 
-    else if (color.r < 100 && color.g < 100 && color.b > 150) c = 3; 
-    else if (color.r > 150 && color.g < 100 && color.b < 100) c = 4; 
-    else if (color.r > 200 && color.g > 200 && color.b < 100) c = 5; 
-    else if (color.r > 200 && color.g > 100 && color.b < 50) c = 6; 
-
-    uint8_t packed = (c << 4) | c;
-    memset(buffer_, packed, 600 * 448 / 2);
+    memset(buffer_, 0x11, 600 * 448 / 2);
   }
 
   void draw_absolute_pixel_internal(int x, int y, Color color) override {
