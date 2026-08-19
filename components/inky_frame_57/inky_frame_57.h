@@ -27,7 +27,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     this->enable(); // Locks SPI bus
     digitalWrite(DC_PIN, LOW);
     digitalWrite(CS_PIN, LOW); 
-    this->parent_->write(&command, 1); // Bypass internal locks
+    this->write_byte(command);
     digitalWrite(CS_PIN, HIGH);
     this->disable(); // Unlocks SPI bus
   }
@@ -36,7 +36,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     this->enable();
     digitalWrite(DC_PIN, HIGH);
     digitalWrite(CS_PIN, LOW);
-    this->parent_->write(&data, 1);
+    this->write_byte(data);
     digitalWrite(CS_PIN, HIGH);
     this->disable();
   }
@@ -120,8 +120,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     
     // Send Command 0x10
     digitalWrite(DC_PIN, LOW);
-    uint8_t cmd = 0x10;
-    this->parent_->write(&cmd, 1);
+    this->write_byte(0x10);
     
     // Send Data
     digitalWrite(DC_PIN, HIGH);
@@ -130,7 +129,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     uint8_t *ptr = buffer_;
     while (remaining > 0) {
       size_t chunk = remaining > 4096 ? 4096 : remaining;
-      this->parent_->write(ptr, chunk);
+      this->write_array(ptr, chunk);
       ptr += chunk;
       remaining -= chunk;
       App.feed_wdt(); 
