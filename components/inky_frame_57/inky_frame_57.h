@@ -11,17 +11,16 @@ namespace inky_frame_57 {
 static const char *const TAG = "inky_frame_57";
 
 class InkyFrame57 : public display::DisplayBuffer,
+                    // Dropped to 4MHz for E-ink data stability
                     public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW,
                                           spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_4MHZ> {
  protected:
   uint8_t *buffer_;
   bool initialised_ = false;
 
-  const int DC_PIN = 28;
+  // Corrected back to the official schematic
+  const int DC_PIN = 28; 
   const int RST_PIN = 27;
-  const int SR_CLK_PIN = 8;
-  const int SR_LATCH_PIN = 9;
-  const int SR_DATA_PIN = 10;
   const int HOLD_VSYS_EN_PIN = 2; 
 
   void command(uint8_t command) {
@@ -38,56 +37,23 @@ class InkyFrame57 : public display::DisplayBuffer,
     this->disable();
   }
 
-  bool is_busy() {
-    digitalWrite(SR_LATCH_PIN, LOW);
-    delayMicroseconds(1);
-    digitalWrite(SR_LATCH_PIN, HIGH);
-    delayMicroseconds(1);
-
-    return digitalRead(SR_DATA_PIN) == LOW; 
-  }
-
-  void wait_busy() {
-    while (is_busy()) {
-      delay(50);
-      App.feed_wdt(); 
-      yield(); 
-    }
-  }
-
   void init_display() {
     ESP_LOGI(TAG, "Starting Hardware Reset...");
     digitalWrite(RST_PIN, LOW);
     delay(20);
     digitalWrite(RST_PIN, HIGH);
-    delay(20);
-
-    ESP_LOGI(TAG, "Waiting for initial busy state to clear...");
-    wait_busy();
+    delay(200);
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
-    command(0x01); 
-    data(0x37); data(0x00); data(0x23); data(0x23);
-
-    command(0x00); 
-    data(0xEF); data(0x08);
-
+    command(0x01); data(0x37); data(0x00); data(0x23); data(0x23);
+    command(0x00); data(0xEF); data(0x08);
     command(0x03); data(0x00);
-
-    command(0x06); 
-    data(0xC7); data(0xC7); data(0x1D);
-
+    command(0x06); data(0xC7); data(0xC7); data(0x1D);
     command(0x30); data(0x3C);
-
     command(0x41); data(0x00);
-
     command(0x50); data(0x37);
-
     command(0x60); data(0x22);
-
-    command(0x61); 
-    data(0x02); data(0x58); data(0x01); data(0xC0);
-
+    command(0x61); data(0x02); data(0x58); data(0x01); data(0xC0);
     command(0xE3); data(0xAA);
     
     initialised_ = true;
@@ -101,9 +67,6 @@ class InkyFrame57 : public display::DisplayBuffer,
       
     pinMode(DC_PIN, OUTPUT);
     pinMode(RST_PIN, OUTPUT);
-    pinMode(SR_CLK_PIN, OUTPUT);
-    pinMode(SR_LATCH_PIN, OUTPUT);
-    pinMode(SR_DATA_PIN, INPUT);
 
     this->spi_setup();
 
@@ -116,7 +79,7 @@ class InkyFrame57 : public display::DisplayBuffer,
             return; 
         }
         
-        // Pre-fill buffer with white (0x11)
+        // Pre-fill buffer with white
         memset(buffer_, 0x11, 600 * 448 / 2); 
         ESP_LOGI(TAG, "Buffer allocated successfully.");
 
@@ -136,7 +99,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     
     ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
     command(0x04);
-    wait_busy();
+    delay(100); // 100ms is plenty for the UC8159 to power up
 
     ESP_LOGI(TAG, "Transmitting buffer to display...");
     command(0x10); 
@@ -147,11 +110,19 @@ class InkyFrame57 : public display::DisplayBuffer,
     
     ESP_LOGI(TAG, "Commanding screen refresh...");
     command(0x12); 
-    wait_busy();
+    
+    // HARDCODED REFRESH DELAY
+    // 7-color ACeP panels physically take ~30-32 seconds to arrange the colored particles.
+    // By hardcoding this, we bypass any shift-register bugs entirely.
+    ESP_LOGI(TAG, "Waiting 32 seconds for physical screen refresh...");
+    for (int i = 0; i < 32; i++) {
+      delay(1000);
+      App.feed_wdt(); // Keep the ESPHome watchdog happy
+    }
 
     ESP_LOGI(TAG, "Powering OFF E-Ink Panel (Burn-in protection)...");
     command(0x02);
-    wait_busy();
+    delay(100);
 
     ESP_LOGI(TAG, "Screen refresh complete.");
   }
