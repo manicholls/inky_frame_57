@@ -44,16 +44,26 @@ class InkyFrame57 : public display::DisplayBuffer,
     digitalWrite(SR_LATCH_PIN, HIGH);
     delayMicroseconds(1);
     
-    // The BUSY signal outputs immediately to Q7 without needing clock pulses.
-    // Active LOW (LOW means busy).
-    return digitalRead(SR_DATA_PIN) == LOW; 
+    uint8_t state = 0;
+    // Shift out all 8 bits to reach the true Busy pin
+    for (int i = 7; i >= 0; i--) {
+      if (digitalRead(SR_DATA_PIN)) {
+        state |= (1 << i);
+      }
+      digitalWrite(SR_CLK_PIN, HIGH);
+      delayMicroseconds(1);
+      digitalWrite(SR_CLK_PIN, LOW);
+      delayMicroseconds(1);
+    }
+    
+    // Busy is Bit 0. Active LOW (0 = busy).
+    return (state & 0x01) == 0; 
   }
 
   void wait_busy(const char* step) {
     ESP_LOGI(TAG, "Waiting for %s...", step);
     
-    // CRITICAL: Give the UC8159 controller time to actually assert the BUSY pin
-    // This prevents the race condition that causes "muddy black sludge"
+    // Give the UC8159 controller time to assert the BUSY pin
     delay(50); 
     
     uint32_t start = millis();
@@ -62,7 +72,7 @@ class InkyFrame57 : public display::DisplayBuffer,
       App.feed_wdt(); 
       yield(); 
       
-      // Failsafe timeout to prevent permanent lockups
+      // 45 second failsafe timeout
       if (millis() - start > 45000) {
         ESP_LOGE(TAG, "TIMEOUT waiting for %s!", step);
         break;
@@ -114,7 +124,7 @@ class InkyFrame57 : public display::DisplayBuffer,
         buffer_ = new (std::nothrow) uint8_t[600 * 448 / 2];
         
         if (buffer_ == nullptr) {
-            ESP_LOGE(TAG, "FATAL: OUT OF MEMORY! Could not allocate display buffer.");
+            ESP_LOGE(TAG, "FATAL: OUT OF MEMORY!");
             return; 
         }
         
@@ -134,7 +144,12 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     this->do_update_();
     
-    // 1. Data Transmission (Must happen BEFORE power on)
+    // 1. Power ON
+    ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
+    command(0x04);
+    wait_busy("Power ON");
+
+    // 2. Transmit Image Data
     ESP_LOGI(TAG, "Transmitting buffer to display...");
     command(0x10); 
     digitalWrite(DC_PIN, HIGH);
@@ -142,18 +157,13 @@ class InkyFrame57 : public display::DisplayBuffer,
     this->write_array(buffer_, 600 * 448 / 2);
     this->disable();
     
-    // 2. Power ON
-    ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
-    command(0x04);
-    wait_busy("Power ON");
-
-    // 3. Refresh
+    // 3. Screen Refresh
     ESP_LOGI(TAG, "Commanding screen refresh...");
     command(0x12); 
     wait_busy("Screen Refresh");
 
-    // 4. Power OFF
-    ESP_LOGI(TAG, "Powering OFF E-Ink Panel (Burn-in protection)...");
+    // 4. Power OFF (Burn-in protection)
+    ESP_LOGI(TAG, "Powering OFF E-Ink Panel...");
     command(0x02);
     wait_busy("Power OFF");
 
