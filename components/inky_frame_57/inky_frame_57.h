@@ -17,7 +17,7 @@ class InkyFrame57 : public display::DisplayBuffer,
   uint8_t *buffer_;
   bool initialised_ = false;
 
-  const int DC_PIN = 28;
+  const int DC_PIN = 16;
   const int RST_PIN = 27;
   const int SR_CLK_PIN = 8;
   const int SR_LATCH_PIN = 9;
