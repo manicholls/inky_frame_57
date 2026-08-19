@@ -17,6 +17,8 @@ class InkyFrame57 : public display::DisplayBuffer,
   uint8_t *buffer_;
   bool initialised_ = false;
 
+  // Manually managed pins
+  const int CS_PIN = 17; 
   const int DC_PIN = 28; 
   const int RST_PIN = 27;
   const int SR_CLK_PIN = 8;
@@ -26,17 +28,16 @@ class InkyFrame57 : public display::DisplayBuffer,
 
   void command(uint8_t command) {
     digitalWrite(DC_PIN, LOW);
-    this->enable();
-    // Bypass SPIDevice wrapper to prevent double-toggling the CS pin
-    this->parent_->write_byte(command);
-    this->disable();
+    digitalWrite(CS_PIN, LOW); // Manual CS Control
+    this->transfer_byte(command);
+    digitalWrite(CS_PIN, HIGH);
   }
 
   void data(uint8_t data) {
     digitalWrite(DC_PIN, HIGH);
-    this->enable();
-    this->parent_->write_byte(data);
-    this->disable();
+    digitalWrite(CS_PIN, LOW);
+    this->transfer_byte(data);
+    digitalWrite(CS_PIN, HIGH);
   }
 
   bool is_busy() {
@@ -44,21 +45,17 @@ class InkyFrame57 : public display::DisplayBuffer,
     delayMicroseconds(1);
     digitalWrite(SR_LATCH_PIN, HIGH);
     delayMicroseconds(1);
-    
     return digitalRead(SR_DATA_PIN) == LOW; 
   }
 
   void wait_busy(const char* step) {
     ESP_LOGI(TAG, "Waiting for %s...", step);
-    
     delay(50); 
-    
     uint32_t start = millis();
     while (is_busy()) {
       delay(50);
       App.feed_wdt(); 
       yield(); 
-      
       if (millis() - start > 45000) {
         ESP_LOGE(TAG, "TIMEOUT waiting for %s!", step);
         break;
@@ -97,6 +94,9 @@ class InkyFrame57 : public display::DisplayBuffer,
     pinMode(HOLD_VSYS_EN_PIN, OUTPUT);
     digitalWrite(HOLD_VSYS_EN_PIN, HIGH);
       
+    pinMode(CS_PIN, OUTPUT);
+    digitalWrite(CS_PIN, HIGH);
+
     pinMode(DC_PIN, OUTPUT);
     pinMode(RST_PIN, OUTPUT);
     pinMode(SR_CLK_PIN, OUTPUT);
@@ -123,48 +123,42 @@ class InkyFrame57 : public display::DisplayBuffer,
   }
 
   void update() override {
-    if (!initialised_) {
-      return;
-    }
+    if (!initialised_) return;
 
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     this->do_update_();
     
-    // 1. Power ON (SRAM must be active to receive pixels)
     ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
     command(0x04);
     wait_busy("Power ON");
 
-    // 2. Transmit Image Data
     ESP_LOGI(TAG, "Transmitting buffer to display...");
     command(0x10); 
     digitalWrite(DC_PIN, HIGH);
     
-    // Lock CS LOW manually for the entire 134KB transaction
-    this->enable();
+    // Lock CS manually for the entire multi-chunk transmission
+    digitalWrite(CS_PIN, LOW);
     
     size_t remaining = 600 * 448 / 2;
     uint8_t *ptr = buffer_;
     while (remaining > 0) {
       size_t chunk = remaining > 4096 ? 4096 : remaining;
       
-      // Write directly to the underlying bus to prevent CS flapping
-      this->parent_->write_array(ptr, chunk);
+      // ESPHome's write_array no longer touches CS because it's not in YAML
+      this->write_array(ptr, chunk);
       
       ptr += chunk;
       remaining -= chunk;
       App.feed_wdt(); 
     }
     
-    // Release CS HIGH only after all 134KB are successfully received
-    this->disable();
+    // Release CS
+    digitalWrite(CS_PIN, HIGH);
     
-    // 3. Screen Refresh
     ESP_LOGI(TAG, "Commanding screen refresh...");
     command(0x12); 
     wait_busy("Screen Refresh");
 
-    // 4. Power OFF (Burn-in protection)
     ESP_LOGI(TAG, "Powering OFF E-Ink Panel...");
     command(0x02);
     wait_busy("Power OFF");
