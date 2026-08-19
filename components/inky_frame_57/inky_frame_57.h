@@ -20,66 +20,51 @@ class InkyFrame57 : public display::DisplayBuffer,
   const int CS_PIN = 17; 
   const int DC_PIN = 28; 
   const int RST_PIN = 27;
-  const int SR_CLK_PIN = 8;
-  const int SR_LATCH_PIN = 9;
-  const int SR_DATA_PIN = 10;
   const int HOLD_VSYS_EN_PIN = 2; 
 
   void command(uint8_t command) {
-    this->enable(); // Locks SPI bus
     digitalWrite(DC_PIN, LOW);
     digitalWrite(CS_PIN, LOW); 
-    this->write_byte(command);
+    this->write_byte(command); // Locks & unlocks internally safely
     digitalWrite(CS_PIN, HIGH);
-    this->disable(); // Unlocks SPI bus
   }
 
   void data(uint8_t data) {
-    this->enable();
     digitalWrite(DC_PIN, HIGH);
     digitalWrite(CS_PIN, LOW);
-    this->write_byte(data);
+    this->write_byte(data); 
     digitalWrite(CS_PIN, HIGH);
-    this->disable();
   }
 
-  bool is_busy() {
-    digitalWrite(SR_LATCH_PIN, LOW);
-    delayMicroseconds(1);
-    digitalWrite(SR_LATCH_PIN, HIGH);
-    delayMicroseconds(1);
-    
-    // REVERTED: The true Busy signal is output immediately (Q7) without clocking.
-    // Active LOW (0 = busy).
-    return digitalRead(SR_DATA_PIN) == LOW; 
-  }
-
+  // DUMB, BULLETPROOF WAIT TIMER
   void wait_busy(const char* step) {
-    ESP_LOGI(TAG, "Waiting for %s...", step);
+    ESP_LOGI(TAG, "Executing %s...", step);
     
-    delay(50); 
-    
-    uint32_t start = millis();
-    while (is_busy()) {
-      delay(50);
-      App.feed_wdt(); 
-      yield(); 
-      
-      if (millis() - start > 45000) {
-        ESP_LOGE(TAG, "TIMEOUT waiting for %s!", step);
-        break;
-      }
+    int delay_ms = 200;
+    if (strcmp(step, "Screen Refresh") == 0) {
+      delay_ms = 35000; // Force a 35 second wait
+    } else if (strcmp(step, "Power ON") == 0) {
+      delay_ms = 1000; 
+    } else if (strcmp(step, "Power OFF") == 0) {
+      delay_ms = 1000; 
+    } else if (strcmp(step, "Hardware Reset") == 0) {
+      delay_ms = 500; 
     }
-    ESP_LOGI(TAG, "%s complete! Took %d ms", step, millis() - start);
+
+    uint32_t start = millis();
+    while (millis() - start < delay_ms) {
+      delay(50);
+      App.feed_wdt(); // Keeps ESPHome alive while waiting
+      yield(); 
+    }
+    ESP_LOGI(TAG, "%s complete!", step);
   }
 
   void init_display() {
     ESP_LOGI(TAG, "Starting Hardware Reset...");
     digitalWrite(RST_PIN, LOW);
-    delay(20);
+    delay(100);
     digitalWrite(RST_PIN, HIGH);
-    delay(20);
-
     wait_busy("Hardware Reset");
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
@@ -108,9 +93,6 @@ class InkyFrame57 : public display::DisplayBuffer,
 
     pinMode(DC_PIN, OUTPUT);
     pinMode(RST_PIN, OUTPUT);
-    pinMode(SR_CLK_PIN, OUTPUT);
-    pinMode(SR_LATCH_PIN, OUTPUT);
-    pinMode(SR_DATA_PIN, INPUT);
 
     this->spi_setup();
 
@@ -137,36 +119,35 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     this->do_update_();
     
+    // 1. Transmit Image Data BEFORE Powering ON
+    ESP_LOGI(TAG, "Transmitting buffer to display...");
+    command(0x10); 
+    
+    digitalWrite(DC_PIN, HIGH);
+    digitalWrite(CS_PIN, LOW); // Lock CS LOW manually
+    
+    // Brute-force byte-by-byte transfer bypasses all DMA and Chunking bugs.
+    // It's slower, but 100% mathematically reliable.
+    for (size_t i = 0; i < 600 * 448 / 2; i++) {
+      this->write_byte(buffer_[i]);
+      if (i % 4096 == 0) {
+        App.feed_wdt();
+      }
+    }
+    
+    digitalWrite(CS_PIN, HIGH); // Release CS manually
+    
+    // 2. Power ON
     ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
     command(0x04);
     wait_busy("Power ON");
 
-    ESP_LOGI(TAG, "Transmitting buffer to display...");
-    command(0x10); 
-    
-    this->enable(); // Lock SPI bus
-    digitalWrite(DC_PIN, HIGH);
-    digitalWrite(CS_PIN, LOW); // Lock CS LOW manually
-    
-    size_t remaining = 600 * 448 / 2;
-    uint8_t *ptr = buffer_;
-    while (remaining > 0) {
-      size_t chunk = remaining > 4096 ? 4096 : remaining;
-      
-      this->write_array(ptr, chunk);
-      
-      ptr += chunk;
-      remaining -= chunk;
-      App.feed_wdt(); 
-    }
-    
-    digitalWrite(CS_PIN, HIGH); // Release CS
-    this->disable(); // Unlock SPI bus
-    
+    // 3. Screen Refresh
     ESP_LOGI(TAG, "Commanding screen refresh...");
     command(0x12); 
     wait_busy("Screen Refresh");
 
+    // 4. Power OFF (Burn-in protection)
     ESP_LOGI(TAG, "Powering OFF E-Ink Panel...");
     command(0x02);
     wait_busy("Power OFF");
