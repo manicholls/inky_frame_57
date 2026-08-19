@@ -73,15 +73,6 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "Display Initialization Complete!");
   }
 
-  // OVERRIDE THE ESPHOME DRAWING ENGINE
-  void do_update_() override {
-    // 1. Brutally force the entire buffer to Brilliant White (0x11)
-    memset(buffer_, 0x11, 600 * 448 / 2);
-    
-    // 2. Allow the user's YAML lambda to draw graphics on top of the white background
-    this->draw_pixels_();
-  }
-
  public:
   void setup() override {
     pinMode(HOLD_VSYS_EN_PIN, OUTPUT);
@@ -108,7 +99,8 @@ class InkyFrame57 : public display::DisplayBuffer,
         ESP_LOGI(TAG, "Buffer allocated successfully.");
         
         initialised_ = true;
-        // Removed the boot-crashing direct update call!
+        // Removed the boot-crashing update call! 
+        // The display will naturally refresh 60 seconds after boot.
     });
   }
 
@@ -116,8 +108,21 @@ class InkyFrame57 : public display::DisplayBuffer,
     if (!initialised_) return;
 
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
-    this->do_update_(); 
     
+    // 1. ESPHome clears the buffer to Black, then draws your YAML lambda graphics
+    this->do_update_();
+    
+    // 2. We inject a 10x10 Red square in the top left corner to guarantee the 
+    // e-ink controller sees a change and physically flashes the screen.
+    for (int y = 0; y < 10; y++) {
+      for (int x = 0; x < 10; x++) {
+        int idx = (y * 600 + x) / 2;
+        if (x % 2 == 0) buffer_[idx] = (buffer_[idx] & 0x0F) | (4 << 4);
+        else buffer_[idx] = (buffer_[idx] & 0xF0) | 4;
+      }
+    }
+    
+    // 3. Re-initialize and transmit to the hardware
     init_display();
     
     ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
