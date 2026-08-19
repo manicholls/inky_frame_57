@@ -23,12 +23,12 @@ class InkyFrame57 : public display::DisplayBuffer,
   const int HOLD_VSYS_EN_PIN = 2; 
 
   void command(uint8_t command) {
-    this->enable(); // Locks SPI bus safely
+    this->enable(); 
     digitalWrite(DC_PIN, LOW);
     digitalWrite(CS_PIN, LOW); 
     this->write_byte(command);
     digitalWrite(CS_PIN, HIGH);
-    this->disable(); // Unlocks SPI bus safely
+    this->disable(); 
   }
 
   void data(uint8_t data) {
@@ -59,21 +59,26 @@ class InkyFrame57 : public display::DisplayBuffer,
     delay(200);
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
-    command(0x00); data(0xEF); data(0x08); // PSR
-    command(0x01); data(0x37); data(0x00); data(0x23); data(0x23); // PWR
-    command(0x03); data(0x00); // PFS
-    command(0x06); data(0xC7); data(0xC7); data(0x1D); // BTST
-    command(0x30); data(0x3C); // PLL
-    command(0x40); data(0x00); // TSC 
-    command(0x50); data(0x37); // CDI
-    command(0x60); data(0x22); // TCON
-    command(0x61); data(0x02); data(0x58); data(0x01); data(0xC0); // TRES 600x448
-    command(0xE3); data(0xAA); // PWS
+    command(0x00); data(0xEF); data(0x08); 
+    command(0x01); data(0x37); data(0x00); data(0x23); data(0x23); 
+    command(0x03); data(0x00); 
+    command(0x06); data(0xC7); data(0xC7); data(0x1D); 
+    command(0x30); data(0x3C); 
+    command(0x40); data(0x00); 
+    command(0x50); data(0x37); 
+    command(0x60); data(0x22); 
+    command(0x61); data(0x02); data(0x58); data(0x01); data(0xC0); 
+    command(0xE3); data(0xAA); 
     
     ESP_LOGI(TAG, "Display Initialization Complete!");
   }
 
  public:
+  // Override ESPHome's internal engine to clear the screen to White instead of Black
+  Color get_bg_color() override {
+    return Color(255, 255, 255); 
+  }
+
   void setup() override {
     pinMode(HOLD_VSYS_EN_PIN, OUTPUT);
     digitalWrite(HOLD_VSYS_EN_PIN, HIGH);
@@ -99,6 +104,9 @@ class InkyFrame57 : public display::DisplayBuffer,
         ESP_LOGI(TAG, "Buffer allocated successfully.");
         
         initialised_ = true;
+        
+        // Force an immediate boot-up refresh
+        this->update(); 
     });
   }
 
@@ -108,6 +116,17 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     this->do_update_();
     
+    // INJECT HEARTBEAT PIXELS
+    // Draws a tiny 10x10 Red square in the top left corner to guarantee the controller
+    // detects a physical change and fires the 30-second ACeP flash cycle.
+    for (int y = 0; y < 10; y++) {
+      for (int x = 0; x < 10; x++) {
+        int idx = (y * 600 + x) / 2;
+        if (x % 2 == 0) buffer_[idx] = (buffer_[idx] & 0x0F) | (4 << 4);
+        else buffer_[idx] = (buffer_[idx] & 0xF0) | 4;
+      }
+    }
+    
     init_display();
     
     ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
@@ -116,9 +135,9 @@ class InkyFrame57 : public display::DisplayBuffer,
 
     ESP_LOGI(TAG, "Transmitting buffer to display...");
     
-    this->enable(); // Lock SPI bus
+    this->enable(); 
     digitalWrite(DC_PIN, LOW);
-    digitalWrite(CS_PIN, LOW); // Hold CS manually
+    digitalWrite(CS_PIN, LOW); 
     this->write_byte(0x10);
     
     digitalWrite(DC_PIN, HIGH);
@@ -133,8 +152,8 @@ class InkyFrame57 : public display::DisplayBuffer,
       App.feed_wdt(); 
     }
     
-    digitalWrite(CS_PIN, HIGH); // Release CS manually
-    this->disable(); // Unlock SPI bus
+    digitalWrite(CS_PIN, HIGH); 
+    this->disable(); 
     
     ESP_LOGI(TAG, "Data Stop command...");
     command(0x11);
