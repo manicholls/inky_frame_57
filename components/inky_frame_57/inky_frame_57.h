@@ -11,33 +11,50 @@ namespace inky_frame_57 {
 static const char *const TAG = "inky_frame_57";
 
 class InkyFrame57 : public display::DisplayBuffer,
-                    // Dropped to 2MHz for bulletproof data integrity over 134KB
                     public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW,
-                                          spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_2MHZ> {
+                                          spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_4MHZ> {
  protected:
   uint8_t *buffer_;
   bool initialised_ = false;
 
-  const int CS_PIN = 17; 
-  const int DC_PIN = 28; 
-  const int RST_PIN = 27;
+  const int SR_CLK_PIN = 8;
+  const int SR_LATCH_PIN = 9;
+  const int SR_DATA_OUT_PIN = 11;
   const int HOLD_VSYS_EN_PIN = 2; 
+
+  // Fast, blocking shift register write for display pins
+  // Bit 0 = RESET, Bit 1 = CS, Bit 2 = DC
+  void write_sr(bool rst, bool cs, bool dc) {
+    uint8_t state = 0;
+    if (rst) state |= (1 << 0);
+    if (cs)  state |= (1 << 1);
+    if (dc)  state |= (1 << 2);
+    // Bits 3-7 (LEDs) are safely left 0 during SPI updates to avoid flicker
+
+    digitalWrite(SR_LATCH_PIN, LOW);
+    for (int i = 7; i >= 0; i--) {
+      digitalWrite(SR_DATA_OUT_PIN, (state & (1 << i)) ? HIGH : LOW);
+      digitalWrite(SR_CLK_PIN, HIGH);
+      delayMicroseconds(1);
+      digitalWrite(SR_CLK_PIN, LOW);
+      delayMicroseconds(1);
+    }
+    digitalWrite(SR_LATCH_PIN, HIGH);
+  }
 
   void command(uint8_t command) {
     this->enable(); // Locks SPI bus
-    digitalWrite(DC_PIN, LOW);
-    digitalWrite(CS_PIN, LOW); 
+    write_sr(true, false, false); // CS = LOW, DC = LOW
     this->write_byte(command);
-    digitalWrite(CS_PIN, HIGH);
+    write_sr(true, true, true);   // CS = HIGH, DC = HIGH
     this->disable(); // Unlocks SPI bus
   }
 
   void data(uint8_t data) {
     this->enable();
-    digitalWrite(DC_PIN, HIGH);
-    digitalWrite(CS_PIN, LOW);
+    write_sr(true, false, true); // CS = LOW, DC = HIGH
     this->write_byte(data);
-    digitalWrite(CS_PIN, HIGH);
+    write_sr(true, true, true);  // CS = HIGH, DC = HIGH
     this->disable();
   }
 
@@ -54,9 +71,9 @@ class InkyFrame57 : public display::DisplayBuffer,
 
   void init_display() {
     ESP_LOGI(TAG, "Starting Hardware Reset...");
-    digitalWrite(RST_PIN, LOW);
+    write_sr(false, true, true); // Pull RESET LOW
     delay(20);
-    digitalWrite(RST_PIN, HIGH);
+    write_sr(true, true, true);  // Release RESET HIGH
     delay(200);
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
@@ -79,11 +96,10 @@ class InkyFrame57 : public display::DisplayBuffer,
     pinMode(HOLD_VSYS_EN_PIN, OUTPUT);
     digitalWrite(HOLD_VSYS_EN_PIN, HIGH);
       
-    pinMode(CS_PIN, OUTPUT);
-    digitalWrite(CS_PIN, HIGH);
-
-    pinMode(DC_PIN, OUTPUT);
-    pinMode(RST_PIN, OUTPUT);
+    // Configure the Shift Register pins for our C++ manual override
+    pinMode(SR_CLK_PIN, OUTPUT);
+    pinMode(SR_LATCH_PIN, OUTPUT);
+    pinMode(SR_DATA_OUT_PIN, OUTPUT);
 
     this->spi_setup();
 
@@ -109,21 +125,18 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     this->do_update_();
     
-    // CRITICAL: The UC8159 loses its registers after Power OFF (0x02).
-    // We must re-initialize the hardware at the start of every update cycle!
     init_display();
     
     ESP_LOGI(TAG, "Transmitting buffer to display...");
     
     this->enable(); // Lock SPI bus
-    digitalWrite(CS_PIN, LOW); // CS MUST STAY LOW FOR COMMAND + DATA
     
-    // Send Command 0x10
-    digitalWrite(DC_PIN, LOW);
+    // Command 0x10
+    write_sr(true, false, false); // CS = LOW, DC = LOW
     this->write_byte(0x10);
     
-    // Send Data
-    digitalWrite(DC_PIN, HIGH);
+    // Switch to Data phase
+    write_sr(true, false, true); // CS = LOW, DC = HIGH
     
     size_t remaining = 600 * 448 / 2;
     uint8_t *ptr = buffer_;
@@ -132,10 +145,13 @@ class InkyFrame57 : public display::DisplayBuffer,
       this->write_array(ptr, chunk);
       ptr += chunk;
       remaining -= chunk;
+      
+      // CRITICAL: We feed the watchdog but DO NOT call yield() here. 
+      // This prevents ESPHome from accidentally reverting the shift register mid-transfer!
       App.feed_wdt(); 
     }
     
-    digitalWrite(CS_PIN, HIGH); // Release CS only after all 134KB are sent
+    write_sr(true, true, true); // Release CS HIGH
     this->disable(); // Unlock SPI
     
     ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
