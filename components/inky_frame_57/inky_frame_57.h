@@ -20,51 +20,55 @@ class InkyFrame57 : public display::DisplayBuffer,
   const int CS_PIN = 17; 
   const int DC_PIN = 28; 
   const int RST_PIN = 27;
+  const int BUSY_PIN = 26; // THE SMOKING GUN: Dedicated hardware pin
   const int HOLD_VSYS_EN_PIN = 2; 
 
   void command(uint8_t command) {
+    this->enable(); // Locks SPI bus
     digitalWrite(DC_PIN, LOW);
     digitalWrite(CS_PIN, LOW); 
-    this->write_byte(command); // Locks & unlocks internally safely
+    this->transfer_byte(command);
     digitalWrite(CS_PIN, HIGH);
+    this->disable(); // Unlocks SPI bus
   }
 
   void data(uint8_t data) {
+    this->enable();
     digitalWrite(DC_PIN, HIGH);
     digitalWrite(CS_PIN, LOW);
-    this->write_byte(data); 
+    this->transfer_byte(data);
     digitalWrite(CS_PIN, HIGH);
+    this->disable();
   }
 
-  // DUMB, BULLETPROOF WAIT TIMER
   void wait_busy(const char* step) {
-    ESP_LOGI(TAG, "Executing %s...", step);
+    ESP_LOGI(TAG, "Waiting for %s...", step);
     
-    int delay_ms = 200;
-    if (strcmp(step, "Screen Refresh") == 0) {
-      delay_ms = 35000; // Force a 35 second wait
-    } else if (strcmp(step, "Power ON") == 0) {
-      delay_ms = 1000; 
-    } else if (strcmp(step, "Power OFF") == 0) {
-      delay_ms = 1000; 
-    } else if (strcmp(step, "Hardware Reset") == 0) {
-      delay_ms = 500; 
-    }
-
+    delay(50); // Give the controller time to assert the pin
+    
     uint32_t start = millis();
-    while (millis() - start < delay_ms) {
+    
+    // UC8159 pulls GPIO 26 LOW when it is busy drawing
+    while (digitalRead(BUSY_PIN) == LOW) {
       delay(50);
-      App.feed_wdt(); // Keeps ESPHome alive while waiting
+      App.feed_wdt(); 
       yield(); 
+      
+      if (millis() - start > 45000) {
+        ESP_LOGE(TAG, "TIMEOUT waiting for %s!", step);
+        break;
+      }
     }
-    ESP_LOGI(TAG, "%s complete!", step);
+    ESP_LOGI(TAG, "%s complete! Took %d ms", step, millis() - start);
   }
 
   void init_display() {
     ESP_LOGI(TAG, "Starting Hardware Reset...");
     digitalWrite(RST_PIN, LOW);
-    delay(100);
+    delay(20);
     digitalWrite(RST_PIN, HIGH);
+    delay(200);
+
     wait_busy("Hardware Reset");
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
@@ -93,6 +97,9 @@ class InkyFrame57 : public display::DisplayBuffer,
 
     pinMode(DC_PIN, OUTPUT);
     pinMode(RST_PIN, OUTPUT);
+    
+    // Explicitly configure the dedicated BUSY pin
+    pinMode(BUSY_PIN, INPUT);
 
     this->spi_setup();
 
@@ -119,35 +126,35 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     this->do_update_();
     
-    // 1. Transmit Image Data BEFORE Powering ON
     ESP_LOGI(TAG, "Transmitting buffer to display...");
     command(0x10); 
     
+    this->enable(); // Lock SPI
     digitalWrite(DC_PIN, HIGH);
-    digitalWrite(CS_PIN, LOW); // Lock CS LOW manually
+    digitalWrite(CS_PIN, LOW); // Hold CS manually
     
-    // Brute-force byte-by-byte transfer bypasses all DMA and Chunking bugs.
-    // It's slower, but 100% mathematically reliable.
-    for (size_t i = 0; i < 600 * 448 / 2; i++) {
-      this->write_byte(buffer_[i]);
-      if (i % 4096 == 0) {
-        App.feed_wdt();
-      }
+    // Chunked burst write for massive speed without DMA errors
+    size_t remaining = 600 * 448 / 2;
+    uint8_t *ptr = buffer_;
+    while (remaining > 0) {
+      size_t chunk = remaining > 4096 ? 4096 : remaining;
+      this->write_array(ptr, chunk);
+      ptr += chunk;
+      remaining -= chunk;
+      App.feed_wdt(); 
     }
     
-    digitalWrite(CS_PIN, HIGH); // Release CS manually
+    digitalWrite(CS_PIN, HIGH);
+    this->disable(); // Unlock SPI
     
-    // 2. Power ON
     ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
     command(0x04);
     wait_busy("Power ON");
 
-    // 3. Screen Refresh
     ESP_LOGI(TAG, "Commanding screen refresh...");
     command(0x12); 
     wait_busy("Screen Refresh");
 
-    // 4. Power OFF (Burn-in protection)
     ESP_LOGI(TAG, "Powering OFF E-Ink Panel...");
     command(0x02);
     wait_busy("Power OFF");
