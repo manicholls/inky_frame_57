@@ -95,7 +95,6 @@ class InkyFrame57 : public display::DisplayBuffer,
             return; 
         }
         
-        // 0x11 is Brilliant White
         memset(buffer_, 0x11, 600 * 448 / 2); 
         ESP_LOGI(TAG, "Buffer allocated successfully.");
         
@@ -108,11 +107,28 @@ class InkyFrame57 : public display::DisplayBuffer,
 
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     
-    // 1. Brutally force the background to White before drawing
-    memset(buffer_, 0x11, 600 * 448 / 2);
+    // Executes your YAML lambda (which should start with it.fill(Color(255, 255, 255)); )
+    this->do_update_();
     
-    // 2. Bypass ESPHome's internal safety checks and force your YAML lambda to execute
-    this->draw_pixels_();
+    // ==========================================
+    // THE ALTERNATING HEARTBEAT
+    // Toggles a 10x10 corner square between Red and Green every cycle.
+    // This physically guarantees the hardware detects a new image and flashes.
+    static bool heartbeat_toggle = false;
+    heartbeat_toggle = !heartbeat_toggle;
+    uint8_t hb_color = heartbeat_toggle ? 4 : 2; // 4 = Red, 2 = Green
+
+    for (int y = 0; y < 10; y++) {
+      for (int x = 0; x < 10; x++) {
+        int idx = (y * 600 + x) / 2;
+        if (x % 2 == 0) {
+          buffer_[idx] = (buffer_[idx] & 0x0F) | (hb_color << 4);
+        } else {
+          buffer_[idx] = (buffer_[idx] & 0xF0) | hb_color;
+        }
+      }
+    }
+    // ==========================================
     
     init_display();
     
