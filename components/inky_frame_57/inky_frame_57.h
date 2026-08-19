@@ -11,16 +11,17 @@ namespace inky_frame_57 {
 static const char *const TAG = "inky_frame_57";
 
 class InkyFrame57 : public display::DisplayBuffer,
-                    // Dropped to 4MHz for E-ink data stability
                     public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW,
                                           spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_4MHZ> {
  protected:
   uint8_t *buffer_;
   bool initialised_ = false;
 
-  // Corrected back to the official schematic
   const int DC_PIN = 28; 
   const int RST_PIN = 27;
+  const int SR_CLK_PIN = 8;
+  const int SR_LATCH_PIN = 9;
+  const int SR_DATA_PIN = 10;
   const int HOLD_VSYS_EN_PIN = 2; 
 
   void command(uint8_t command) {
@@ -37,12 +38,47 @@ class InkyFrame57 : public display::DisplayBuffer,
     this->disable();
   }
 
+  bool is_busy() {
+    digitalWrite(SR_LATCH_PIN, LOW);
+    delayMicroseconds(1);
+    digitalWrite(SR_LATCH_PIN, HIGH);
+    delayMicroseconds(1);
+    
+    // The BUSY signal outputs immediately to Q7 without needing clock pulses.
+    // Active LOW (LOW means busy).
+    return digitalRead(SR_DATA_PIN) == LOW; 
+  }
+
+  void wait_busy(const char* step) {
+    ESP_LOGI(TAG, "Waiting for %s...", step);
+    
+    // CRITICAL: Give the UC8159 controller time to actually assert the BUSY pin
+    // This prevents the race condition that causes "muddy black sludge"
+    delay(50); 
+    
+    uint32_t start = millis();
+    while (is_busy()) {
+      delay(50);
+      App.feed_wdt(); 
+      yield(); 
+      
+      // Failsafe timeout to prevent permanent lockups
+      if (millis() - start > 45000) {
+        ESP_LOGE(TAG, "TIMEOUT waiting for %s!", step);
+        break;
+      }
+    }
+    ESP_LOGI(TAG, "%s complete! Took %d ms", step, millis() - start);
+  }
+
   void init_display() {
     ESP_LOGI(TAG, "Starting Hardware Reset...");
     digitalWrite(RST_PIN, LOW);
     delay(20);
     digitalWrite(RST_PIN, HIGH);
-    delay(200);
+    delay(20);
+
+    wait_busy("Hardware Reset");
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
     command(0x01); data(0x37); data(0x00); data(0x23); data(0x23);
@@ -67,6 +103,9 @@ class InkyFrame57 : public display::DisplayBuffer,
       
     pinMode(DC_PIN, OUTPUT);
     pinMode(RST_PIN, OUTPUT);
+    pinMode(SR_CLK_PIN, OUTPUT);
+    pinMode(SR_LATCH_PIN, OUTPUT);
+    pinMode(SR_DATA_PIN, INPUT);
 
     this->spi_setup();
 
@@ -79,7 +118,6 @@ class InkyFrame57 : public display::DisplayBuffer,
             return; 
         }
         
-        // Pre-fill buffer with white
         memset(buffer_, 0x11, 600 * 448 / 2); 
         ESP_LOGI(TAG, "Buffer allocated successfully.");
 
@@ -90,17 +128,13 @@ class InkyFrame57 : public display::DisplayBuffer,
 
   void update() override {
     if (!initialised_) {
-      ESP_LOGW(TAG, "Display not initialised yet, skipping update.");
       return;
     }
 
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     this->do_update_();
     
-    ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
-    command(0x04);
-    delay(100); // 100ms is plenty for the UC8159 to power up
-
+    // 1. Data Transmission (Must happen BEFORE power on)
     ESP_LOGI(TAG, "Transmitting buffer to display...");
     command(0x10); 
     digitalWrite(DC_PIN, HIGH);
@@ -108,26 +142,24 @@ class InkyFrame57 : public display::DisplayBuffer,
     this->write_array(buffer_, 600 * 448 / 2);
     this->disable();
     
+    // 2. Power ON
+    ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
+    command(0x04);
+    wait_busy("Power ON");
+
+    // 3. Refresh
     ESP_LOGI(TAG, "Commanding screen refresh...");
     command(0x12); 
-    
-    // HARDCODED REFRESH DELAY
-    // 7-color ACeP panels physically take ~30-32 seconds to arrange the colored particles.
-    // By hardcoding this, we bypass any shift-register bugs entirely.
-    ESP_LOGI(TAG, "Waiting 32 seconds for physical screen refresh...");
-    for (int i = 0; i < 32; i++) {
-      delay(1000);
-      App.feed_wdt(); // Keep the ESPHome watchdog happy
-    }
+    wait_busy("Screen Refresh");
 
+    // 4. Power OFF
     ESP_LOGI(TAG, "Powering OFF E-Ink Panel (Burn-in protection)...");
     command(0x02);
-    delay(100);
+    wait_busy("Power OFF");
 
-    ESP_LOGI(TAG, "Screen refresh complete.");
+    ESP_LOGI(TAG, "Update sequence complete.");
   }
 
-  // Highly optimized fill override for instant background rendering
   void fill(Color color) override {
     uint8_t c = 1; 
     if (color.r < 50 && color.g < 50 && color.b < 50) c = 0; 
