@@ -49,17 +49,9 @@ class InkyFrame57 : public display::DisplayBuffer,
     digitalWrite(SR_LATCH_PIN, HIGH);
     delayMicroseconds(1);
     
-    // Clock past the first 7 bits (Buttons A-E, RTC, EXT Wake)
-    for (int i = 0; i < 7; i++) {
-      digitalWrite(SR_CLK_PIN, HIGH);
-      delayMicroseconds(1);
-      digitalWrite(SR_CLK_PIN, LOW);
-      delayMicroseconds(1);
-    }
-    
-    // Read the 8th bit (Bit 0 of the register)
-    // The UC8159 Busy pin is Active HIGH (1 = Busy, 0 = Ready).
-    return digitalRead(SR_DATA_PIN) == HIGH; 
+    // REVERTED: The true Busy signal is output immediately (Q7) without clocking.
+    // Active LOW (0 = busy).
+    return digitalRead(SR_DATA_PIN) == LOW; 
   }
 
   void wait_busy(const char* step) {
@@ -152,9 +144,9 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "Transmitting buffer to display...");
     command(0x10); 
     
-    this->enable(); 
+    this->enable(); // Lock SPI bus
     digitalWrite(DC_PIN, HIGH);
-    digitalWrite(CS_PIN, LOW);
+    digitalWrite(CS_PIN, LOW); // Lock CS LOW manually
     
     size_t remaining = 600 * 448 / 2;
     uint8_t *ptr = buffer_;
@@ -168,8 +160,8 @@ class InkyFrame57 : public display::DisplayBuffer,
       App.feed_wdt(); 
     }
     
-    digitalWrite(CS_PIN, HIGH);
-    this->disable(); 
+    digitalWrite(CS_PIN, HIGH); // Release CS
+    this->disable(); // Unlock SPI bus
     
     ESP_LOGI(TAG, "Commanding screen refresh...");
     command(0x12); 
