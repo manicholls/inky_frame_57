@@ -43,6 +43,7 @@ class InkyFrame57 : public display::DisplayBuffer,
   void wait_busy(const char* step, uint32_t delay_ms) {
     ESP_LOGI(TAG, "Waiting %d ms for %s...", delay_ms, step);
     uint32_t start = millis();
+    // This strict while-loop prevents the RTOS from exiting the delay early
     while (millis() - start < delay_ms) {
       delay(10);
       App.feed_wdt(); 
@@ -55,10 +56,10 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "Starting Hardware Reset...");
     digitalWrite(RST_PIN, LOW);
     
-    // RESTORED: Standard delay to prevent yielding/crashing during hardware reset
-    delay(20); 
+    // RESTORED: time-enforced wait loops to guarantee the hardware actually resets
+    wait_busy("Reset LOW pulse", 20); 
     digitalWrite(RST_PIN, HIGH);
-    delay(200); 
+    wait_busy("Reset HIGH stabilization", 200); 
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
     command(0x00); data(0xEF); data(0x08); 
@@ -109,14 +110,12 @@ class InkyFrame57 : public display::DisplayBuffer,
 
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     
-    // 1. ESPHome clears the buffer. Our hijacked fill() forces it to Brilliant White.
-    // 2. It then perfectly executes your YAML graphics.
     this->do_update_(); 
     
-    // 3. The Alternating Hash Defeat (50x50 corner block)
+    // Toggling 50x50 corner block to defeat the hardware hash checker
     static bool heartbeat_toggle = false;
     heartbeat_toggle = !heartbeat_toggle;
-    uint8_t hb_color = heartbeat_toggle ? 4 : 1; 
+    uint8_t hb_color = heartbeat_toggle ? 4 : 2; // Alternates Red (4) and Green (2)
 
     for (int y = 0; y < 50; y++) {
       for (int x = 0; x < 50; x++) {
@@ -126,7 +125,6 @@ class InkyFrame57 : public display::DisplayBuffer,
       }
     }
     
-    // RESTORED THE EXACT "RED STRIPE" HARDWARE SEQUENCE
     init_display();
     
     ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
@@ -170,8 +168,17 @@ class InkyFrame57 : public display::DisplayBuffer,
   }
 
   void fill(Color color) override {
-    // Hijack ESPHome's internal screen wipe to force White instead of Black
-    memset(buffer_, 0x11, 600 * 448 / 2);
+    uint8_t c = 1; 
+    if (color.r < 50 && color.g < 50 && color.b < 50) c = 0; 
+    else if (color.r > 200 && color.g > 200 && color.b > 200) c = 1; 
+    else if (color.r < 100 && color.g > 150 && color.b < 100) c = 2; 
+    else if (color.r < 100 && color.g < 100 && color.b > 150) c = 3; 
+    else if (color.r > 150 && color.g < 100 && color.b < 100) c = 4; 
+    else if (color.r > 200 && color.g > 200 && color.b < 100) c = 5; 
+    else if (color.r > 200 && color.g > 100 && color.b < 50) c = 6; 
+
+    uint8_t packed = (c << 4) | c;
+    memset(buffer_, packed, 600 * 448 / 2);
   }
 
   void draw_absolute_pixel_internal(int x, int y, Color color) override {
