@@ -73,6 +73,15 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "Display Initialization Complete!");
   }
 
+  // OVERRIDE THE ESPHOME DRAWING ENGINE
+  void do_update_() override {
+    // 1. Brutally force the entire buffer to Brilliant White (0x11)
+    memset(buffer_, 0x11, 600 * 448 / 2);
+    
+    // 2. Allow the user's YAML lambda to draw graphics on top of the white background
+    this->draw_pixels_();
+  }
+
  public:
   void setup() override {
     pinMode(HOLD_VSYS_EN_PIN, OUTPUT);
@@ -99,9 +108,7 @@ class InkyFrame57 : public display::DisplayBuffer,
         ESP_LOGI(TAG, "Buffer allocated successfully.");
         
         initialised_ = true;
-        
-        // Force an immediate boot-up refresh
-        this->update(); 
+        // Removed the boot-crashing direct update call!
     });
   }
 
@@ -109,18 +116,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     if (!initialised_) return;
 
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
-    this->do_update_();
-    
-    // INJECT HEARTBEAT PIXELS
-    // Draws a tiny 10x10 Red square in the top left corner to guarantee the controller
-    // detects a physical change and fires the 30-second ACeP flash cycle.
-    for (int y = 0; y < 10; y++) {
-      for (int x = 0; x < 10; x++) {
-        int idx = (y * 600 + x) / 2;
-        if (x % 2 == 0) buffer_[idx] = (buffer_[idx] & 0x0F) | (4 << 4);
-        else buffer_[idx] = (buffer_[idx] & 0xF0) | 4;
-      }
-    }
+    this->do_update_(); 
     
     init_display();
     
