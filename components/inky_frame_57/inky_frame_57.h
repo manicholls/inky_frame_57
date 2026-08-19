@@ -44,20 +44,9 @@ class InkyFrame57 : public display::DisplayBuffer,
     digitalWrite(SR_LATCH_PIN, HIGH);
     delayMicroseconds(1);
     
-    uint8_t state = 0;
-    // Shift out all 8 bits to reach the true Busy pin
-    for (int i = 7; i >= 0; i--) {
-      if (digitalRead(SR_DATA_PIN)) {
-        state |= (1 << i);
-      }
-      digitalWrite(SR_CLK_PIN, HIGH);
-      delayMicroseconds(1);
-      digitalWrite(SR_CLK_PIN, LOW);
-      delayMicroseconds(1);
-    }
-    
-    // Busy is Bit 0. Active LOW (0 = busy).
-    return (state & 0x01) == 0; 
+    // D7 (Busy) is output immediately. No clock pulses needed.
+    // Active LOW (0 = busy).
+    return digitalRead(SR_DATA_PIN) == LOW; 
   }
 
   void wait_busy(const char* step) {
