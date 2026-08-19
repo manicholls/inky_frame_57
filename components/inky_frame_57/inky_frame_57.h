@@ -51,8 +51,6 @@ class InkyFrame57 : public display::DisplayBuffer,
 
   void wait_busy(const char* step) {
     ESP_LOGI(TAG, "Waiting for %s...", step);
-    
-    // Give the UC8159 controller time to assert the BUSY pin
     delay(50); 
     
     uint32_t start = millis();
@@ -61,7 +59,6 @@ class InkyFrame57 : public display::DisplayBuffer,
       App.feed_wdt(); 
       yield(); 
       
-      // 45 second failsafe timeout
       if (millis() - start > 45000) {
         ESP_LOGE(TAG, "TIMEOUT waiting for %s!", step);
         break;
@@ -133,19 +130,29 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     this->do_update_();
     
-    // 1. Power ON
-    ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
-    command(0x04);
-    wait_busy("Power ON");
-
-    // 2. Transmit Image Data
+    // 1. Transmit Image Data BEFORE Powering ON
     ESP_LOGI(TAG, "Transmitting buffer to display...");
     command(0x10); 
     digitalWrite(DC_PIN, HIGH);
     this->enable();
-    this->write_array(buffer_, 600 * 448 / 2);
+    
+    // Chunk the SPI transfer to prevent RP2040 DMA limits from silently dropping the payload
+    size_t remaining = 600 * 448 / 2;
+    uint8_t *ptr = buffer_;
+    while (remaining > 0) {
+      size_t chunk = remaining > 4096 ? 4096 : remaining;
+      this->write_array(ptr, chunk);
+      ptr += chunk;
+      remaining -= chunk;
+      App.feed_wdt(); // Keep watchdog happy during heavy data transfer
+    }
     this->disable();
     
+    // 2. Power ON
+    ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
+    command(0x04);
+    wait_busy("Power ON");
+
     // 3. Screen Refresh
     ESP_LOGI(TAG, "Commanding screen refresh...");
     command(0x12); 
