@@ -21,7 +21,25 @@ class InkyFrame57 : public display::DisplayBuffer,
   const int DC_PIN = 28; 
   const int RST_PIN = 27;
   const int HOLD_VSYS_EN_PIN = 2; 
+  const int BUSY_PIN = 0;
+  
+  void setup() override {
+    ...
+    pinMode(BUSY_PIN, INPUT);   // must be explicit — don't let it float or default elsewhere
+    ...
+  }
 
+  void wait_busy(const char* step, uint32_t max_ms) {
+    ESP_LOGI(TAG, "Waiting for %s (busy pin)...", step);
+    uint32_t start = millis();
+    // UC8159 BUSY reads LOW while busy, HIGH when ready (same polarity as its sibling UC8151)
+    while (digitalRead(BUSY_PIN) == LOW && millis() - start < max_ms) {
+      delay(10);
+      App.feed_wdt();
+      yield();
+    }
+    ESP_LOGI(TAG, "%s complete after %d ms!", step, millis() - start);
+  }
   void command(uint8_t command) {
     this->enable(); 
     digitalWrite(DC_PIN, LOW);
