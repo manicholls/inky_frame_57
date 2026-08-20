@@ -87,7 +87,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     wait_until_idle("Reset Stabilization");
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
-    send_cmd(0x00, {0xEF, 0x08}); 
+    send_cmd(0x00, {0xEF, 0x08}); // 0xEF confirmed for clean white canvas
     send_cmd(0x01, {0x37, 0x00, 0x23, 0x23}); 
     send_cmd(0x03, {0x00}); 
     send_cmd(0x06, {0xC7, 0xC7, 0x1D}); 
@@ -107,7 +107,7 @@ class InkyFrame57 : public display::DisplayBuffer,
  public:
   void clear() override {
     if (this->buffer_ != nullptr) {
-      memset(this->buffer_, 0x11, 600 * 448 / 2);
+      memset(this->buffer_, 0x11, 600 * 448 / 2); // Wipes canvas to White
     }
   }
 
@@ -145,11 +145,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     if (!this->initialised_) return;
 
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
-    
-    // 1. ESPHome executes your YAML graphics here
-    this->do_update_(); 
-    
-    // (The Blue Square Diagnostic was removed from here)
+    this->do_update_(); // Executes your YAML lambda!
     
     init_display();
     
@@ -196,14 +192,26 @@ class InkyFrame57 : public display::DisplayBuffer,
   void draw_absolute_pixel_internal(int x, int y, Color color) override {
     if (x < 0 || x >= 600 || y < 0 || y >= 448 || this->buffer_ == nullptr) return;
 
-    // Enhanced contrast matcher to catch dark anti-aliased font pixels
     uint8_t c = 1; // Default to White
-    if (color.r < 150 && color.g < 150 && color.b < 150) c = 0;      // Black (including dark greys)
-    else if (color.r > 150 && color.g < 100 && color.b < 100) c = 4; // Red
-    else if (color.r < 100 && color.g > 150 && color.b < 100) c = 2; // Green
-    else if (color.r < 100 && color.g < 100 && color.b > 150) c = 3; // Blue
-    else if (color.r > 150 && color.g > 150 && color.b < 100) c = 5; // Yellow
-    else if (color.r > 150 && color.g > 100 && color.b < 80) c = 6;  // Orange
+    
+    // AGGRESSIVE COLOR SNAPPING
+    // Any pixel that is not explicitly bright white or a primary color snaps to BLACK.
+    // This catches faint grey ESPHome font anti-aliasing and forces it to be visible text.
+    if (color.r > 230 && color.g > 230 && color.b > 230) {
+        c = 1; // Pure White
+    } else if (color.r > 150 && color.g < 100 && color.b < 100) {
+        c = 4; // Red
+    } else if (color.r < 100 && color.g > 150 && color.b < 100) {
+        c = 2; // Green
+    } else if (color.r < 100 && color.g < 100 && color.b > 150) {
+        c = 3; // Blue
+    } else if (color.r > 150 && color.g > 150 && color.b < 100) {
+        c = 5; // Yellow
+    } else if (color.r > 150 && color.g > 100 && color.b < 80) {
+        c = 6; // Orange
+    } else {
+        c = 0; // Anything else (including ALL grey anti-aliasing) becomes BLACK
+    }
 
     int idx = (y * 600 + x) / 2;
     if (x % 2 == 0) {
