@@ -21,20 +21,12 @@ class InkyFrame57 : public display::DisplayBuffer,
   const int DC_PIN = 28; 
   const int RST_PIN = 27;
   const int HOLD_VSYS_EN_PIN = 2; 
-  const int BUSY_PIN = 0;
 
+  // The Shift Register Pins for the Hardware Hack
+  const int SR_CLK_PIN = 8;
+  const int SR_LATCH_PIN = 9;
+  const int SR_DATA_PIN = 10;
 
-  void wait_busy(const char* step, uint32_t max_ms) {
-    ESP_LOGI(TAG, "Waiting for %s (busy pin)...", step);
-    uint32_t start = millis();
-    // UC8159 BUSY reads LOW while busy, HIGH when ready (same polarity as its sibling UC8151)
-    while (digitalRead(BUSY_PIN) == LOW && millis() - start < max_ms) {
-      delay(10);
-      App.feed_wdt();
-      yield();
-    }
-    ESP_LOGI(TAG, "%s complete after %d ms!", step, millis() - start);
-  }
   void command(uint8_t command) {
     this->enable(); 
     digitalWrite(DC_PIN, LOW);
@@ -53,15 +45,45 @@ class InkyFrame57 : public display::DisplayBuffer,
     this->disable();
   }
 
-  // GUARANTEED blocking delay. This defeats the RTOS yielding bug.
-  // It forces the hardware to obey the exact millisecond timing.
-  void delay_blocking(const char* step, uint32_t delay_ms) {
-    ESP_LOGI(TAG, "Waiting %d ms for %s...", delay_ms, step);
-    uint32_t start = millis();
-    while (millis() - start < delay_ms) {
+  // The brilliant hack: Manually read the shift register to find the D7 BUSY pin
+  bool is_busy() {
+    // Pulse Latch LOW then HIGH to load inputs from the buttons and the screen
+    digitalWrite(SR_LATCH_PIN, LOW);
+    delayMicroseconds(5);
+    digitalWrite(SR_LATCH_PIN, HIGH);
+    delayMicroseconds(5);
+
+    // Clock in all 8 bits
+    uint8_t val = 0;
+    for (int i = 0; i < 8; ++i) {
+      if (digitalRead(SR_DATA_PIN) == HIGH) {
+        val |= (1 << (7 - i));
+      }
+      digitalWrite(SR_CLK_PIN, HIGH);
+      delayMicroseconds(1);
+      digitalWrite(SR_CLK_PIN, LOW);
+      delayMicroseconds(1);
+    }
+    
+    // D7 is the Most Significant Bit (Bit 7). The screen pulls it LOW when busy.
+    return (val & 0x80) == 0; 
+  }
+
+  void wait_until_idle(const char* step) {
+    ESP_LOGI(TAG, "Waiting for hardware: %s...", step);
+    
+    // Brief delay to allow the screen to assert the BUSY pin before we check
+    uint32_t start_grace = millis();
+    while (millis() - start_grace < 50) {
+      App.feed_wdt();
+      yield();
+    }
+    
+    // Sit in this loop until D7 on the shift register goes HIGH
+    while (is_busy()) {
       delay(10);
-      App.feed_wdt(); 
-      yield(); 
+      App.feed_wdt();
+      yield();
     }
     ESP_LOGI(TAG, "%s complete!", step);
   }
@@ -69,9 +91,13 @@ class InkyFrame57 : public display::DisplayBuffer,
   void init_display() {
     ESP_LOGI(TAG, "Starting Hardware Reset...");
     digitalWrite(RST_PIN, LOW);
-    delay_blocking("Reset LOW pulse", 20); 
+    
+    // Force physical reset delays 
+    uint32_t t1 = millis(); while(millis() - t1 < 20) { App.feed_wdt(); yield(); }
     digitalWrite(RST_PIN, HIGH);
-    delay_blocking("Reset HIGH stabilization", 200); 
+    uint32_t t2 = millis(); while(millis() - t2 < 200) { App.feed_wdt(); yield(); }
+
+    wait_until_idle("Reset Stabilization");
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
     command(0x00); data(0xEF); data(0x08); 
@@ -98,6 +124,11 @@ class InkyFrame57 : public display::DisplayBuffer,
 
     pinMode(DC_PIN, OUTPUT);
     pinMode(RST_PIN, OUTPUT);
+    
+    // Ensure the shift register pins are correctly set for our manual reads
+    pinMode(SR_CLK_PIN, OUTPUT);
+    pinMode(SR_LATCH_PIN, OUTPUT);
+    pinMode(SR_DATA_PIN, INPUT);
 
     this->spi_setup();
 
@@ -121,16 +152,22 @@ class InkyFrame57 : public display::DisplayBuffer,
     if (!initialised_) return;
 
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
-    
-    // Calls our hijacked fill() below to force a white background and the stripe, 
-    // and THEN natively executes your YAML graphics over top of it.
     this->do_update_(); 
+    
+    // Alternating Red/Green Stripe to guarantee the hash checker fires
+    static bool toggle = false;
+    toggle = !toggle;
+    uint8_t hb_color = toggle ? 0x44 : 0x22; 
+    
+    for (size_t i = 30000; i < 45000; i++) {
+        buffer_[i] = hb_color;
+    }
     
     init_display();
     
     ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
     command(0x04);
-    delay_blocking("Power ON", 2000); 
+    wait_until_idle("Power ON"); 
 
     ESP_LOGI(TAG, "Transmitting buffer to display...");
     
@@ -159,29 +196,17 @@ class InkyFrame57 : public display::DisplayBuffer,
     
     ESP_LOGI(TAG, "Commanding screen refresh...");
     command(0x12); 
-    delay_blocking("Screen Refresh", 35000); 
+    wait_until_idle("Screen Refresh"); 
 
     ESP_LOGI(TAG, "Powering OFF E-Ink Panel...");
     command(0x02);
-    delay_blocking("Power OFF", 1000);
+    wait_until_idle("Power OFF");
 
     ESP_LOGI(TAG, "Update sequence complete.");
   }
 
   void fill(Color color) override {
-    // 1. Force the background to Brilliant White
     memset(buffer_, 0x11, 600 * 448 / 2);
-    
-    // 2. Inject a massive alternating Red/Green stripe in the background.
-    // This physically guarantees the screen's hash checker fires a refresh.
-    static bool toggle = false;
-    toggle = !toggle;
-    uint8_t hb_color = toggle ? 0x44 : 0x22; 
-    
-    // Draw a giant block spanning the entire width of the screen
-    for (size_t i = 30000; i < 45000; i++) {
-        buffer_[i] = hb_color;
-    }
   }
 
   void draw_absolute_pixel_internal(int x, int y, Color color) override {
