@@ -26,8 +26,6 @@ class InkyFrame57 : public display::DisplayBuffer,
   const int SR_LATCH_PIN = 9;
   const int SR_DATA_PIN = 10;
 
-  // THE FIX: Send a command and its arguments in a SINGLE continuous SPI transaction.
-  // E-ink controllers reject arguments if the CS pin pulses HIGH between bytes!
   void send_cmd(uint8_t command, std::initializer_list<uint8_t> args = {}) {
     this->enable(); 
     digitalWrite(DC_PIN, LOW);
@@ -147,13 +145,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     this->do_update_(); 
     
-    static bool toggle = false;
-    toggle = !toggle;
-    uint8_t hb_color = toggle ? 0x44 : 0x22; 
-    
-    for (size_t i = 30000; i < 45000; i++) {
-        buffer_[i] = hb_color;
-    }
+    // The massive Red/Green debug stripe has been completely removed!
     
     init_display();
     
@@ -198,20 +190,22 @@ class InkyFrame57 : public display::DisplayBuffer,
   }
 
   void fill(Color color) override {
+    // Defaults the canvas to pure White before your YAML graphics draw
     memset(buffer_, 0x11, 600 * 448 / 2);
   }
 
   void draw_absolute_pixel_internal(int x, int y, Color color) override {
     if (x < 0 || x >= 600 || y < 0 || y >= 448) return;
 
+    // Palette mapping: Maps standard RGB to the 7-color e-ink palette
     uint8_t c = 1; 
-    if (color.r < 50 && color.g < 50 && color.b < 50) c = 0; 
-    else if (color.r > 200 && color.g > 200 && color.b > 200) c = 1; 
-    else if (color.r < 100 && color.g > 150 && color.b < 100) c = 2; 
-    else if (color.r < 100 && color.g < 100 && color.b > 150) c = 3; 
-    else if (color.r > 150 && color.g < 100 && color.b < 100) c = 4; 
-    else if (color.r > 200 && color.g > 200 && color.b < 100) c = 5; 
-    else if (color.r > 200 && color.g > 100 && color.b < 50) c = 6; 
+    if (color.r < 50 && color.g < 50 && color.b < 50) c = 0; // Black
+    else if (color.r > 200 && color.g > 200 && color.b > 200) c = 1; // White
+    else if (color.r < 100 && color.g > 150 && color.b < 100) c = 2; // Green
+    else if (color.r < 100 && color.g < 100 && color.b > 150) c = 3; // Blue
+    else if (color.r > 150 && color.g < 100 && color.b < 100) c = 4; // Red
+    else if (color.r > 200 && color.g > 200 && color.b < 100) c = 5; // Yellow
+    else if (color.r > 200 && color.g > 100 && color.b < 50) c = 6;  // Orange
 
     int idx = (y * 600 + x) / 2;
     if (x % 2 == 0) {
