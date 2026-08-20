@@ -87,7 +87,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     wait_until_idle("Reset Stabilization");
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
-    send_cmd(0x00, {0xEF, 0x08}); // 0xEF confirmed to power the matrix correctly
+    send_cmd(0x00, {0xEF, 0x08}); 
     send_cmd(0x01, {0x37, 0x00, 0x23, 0x23}); 
     send_cmd(0x03, {0x00}); 
     send_cmd(0x06, {0xC7, 0xC7, 0x1D}); 
@@ -141,7 +141,6 @@ class InkyFrame57 : public display::DisplayBuffer,
     this->initialised_ = true;
   }
 
-  // CORRECTED: Restored update() to satisfy the compiler
   void update() override {
     if (!this->initialised_) return;
 
@@ -150,14 +149,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     // 1. ESPHome executes your YAML graphics here
     this->do_update_(); 
     
-    // 2. DIAGNOSTIC CHECK: Injects a 50x50 Blue Square in the top-left corner.
-    for (int y = 0; y < 50; y++) {
-      for (int x = 0; x < 50; x++) {
-        int idx = (y * 600 + x) / 2;
-        if (x % 2 == 0) this->buffer_[idx] = (this->buffer_[idx] & 0x0F) | (3 << 4); // 3 = Blue
-        else this->buffer_[idx] = (this->buffer_[idx] & 0xF0) | 3;
-      }
-    }
+    // (The Blue Square Diagnostic was removed from here)
     
     init_display();
     
