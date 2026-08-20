@@ -87,7 +87,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     wait_until_idle("Reset Stabilization");
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
-    send_cmd(0x00, {0xEF, 0x08}); // 0xEF confirmed for clean white canvas
+    send_cmd(0x00, {0xEF, 0x08}); 
     send_cmd(0x01, {0x37, 0x00, 0x23, 0x23}); 
     send_cmd(0x03, {0x00}); 
     send_cmd(0x06, {0xC7, 0xC7, 0x1D}); 
@@ -107,7 +107,7 @@ class InkyFrame57 : public display::DisplayBuffer,
  public:
   void clear() override {
     if (this->buffer_ != nullptr) {
-      memset(this->buffer_, 0x11, 600 * 448 / 2); // Wipes canvas to White
+      memset(this->buffer_, 0x11, 600 * 448 / 2);
     }
   }
 
@@ -135,6 +135,8 @@ class InkyFrame57 : public display::DisplayBuffer,
         return; 
     }
     
+    // Explicitly lock the rotation so ESPHome doesn't draw off-screen
+    this->rotation_ = display::DISPLAY_ROTATION_0_DEGREES;
     this->clear(); 
     ESP_LOGI(TAG, "Buffer allocated successfully.");
     
@@ -145,7 +147,16 @@ class InkyFrame57 : public display::DisplayBuffer,
     if (!this->initialised_) return;
 
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
-    this->do_update_(); // Executes your YAML lambda!
+    this->do_update_(); 
+    
+    // Tiny 10x10 Diagnostic Blue Dot in the top-left corner
+    for (int y = 0; y < 10; y++) {
+      for (int x = 0; x < 10; x++) {
+        int idx = (y * 600 + x) / 2;
+        if (x % 2 == 0) this->buffer_[idx] = (this->buffer_[idx] & 0x0F) | (3 << 4);
+        else this->buffer_[idx] = (this->buffer_[idx] & 0xF0) | 3;
+      }
+    }
     
     init_display();
     
@@ -192,26 +203,16 @@ class InkyFrame57 : public display::DisplayBuffer,
   void draw_absolute_pixel_internal(int x, int y, Color color) override {
     if (x < 0 || x >= 600 || y < 0 || y >= 448 || this->buffer_ == nullptr) return;
 
-    uint8_t c = 1; // Default to White
+    uint8_t c = 1; 
     
-    // AGGRESSIVE COLOR SNAPPING
-    // Any pixel that is not explicitly bright white or a primary color snaps to BLACK.
-    // This catches faint grey ESPHome font anti-aliasing and forces it to be visible text.
-    if (color.r > 230 && color.g > 230 && color.b > 230) {
-        c = 1; // Pure White
-    } else if (color.r > 150 && color.g < 100 && color.b < 100) {
-        c = 4; // Red
-    } else if (color.r < 100 && color.g > 150 && color.b < 100) {
-        c = 2; // Green
-    } else if (color.r < 100 && color.g < 100 && color.b > 150) {
-        c = 3; // Blue
-    } else if (color.r > 150 && color.g > 150 && color.b < 100) {
-        c = 5; // Yellow
-    } else if (color.r > 150 && color.g > 100 && color.b < 80) {
-        c = 6; // Orange
-    } else {
-        c = 0; // Anything else (including ALL grey anti-aliasing) becomes BLACK
-    }
+    if (color.r > 200 && color.g > 200 && color.b > 200) { c = 1; }
+    else if (color.r < 100 && color.g < 100 && color.b < 100) { c = 0; }
+    else if (color.r > 150 && color.g < 100 && color.b < 100) { c = 4; } // Red
+    else if (color.r < 100 && color.g > 150 && color.b < 100) { c = 2; }
+    else if (color.r < 100 && color.g < 100 && color.b > 150) { c = 3; }
+    else if (color.r > 150 && color.g > 150 && color.b < 100) { c = 5; }
+    else if (color.r > 150 && color.g > 100 && color.b < 80) { c = 6; }
+    else { c = 0; } 
 
     int idx = (y * 600 + x) / 2;
     if (x % 2 == 0) {
