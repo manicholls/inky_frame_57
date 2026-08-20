@@ -20,10 +20,10 @@ async def to_code(config):
     
     if CONF_LAMBDA in config:
         display_ns = cg.esphome_ns.namespace('display')
-        # CORRECTED: Changed 'ptr' to 'ref' so it matches ESPHome's display_writer_t
-        DisplayBufferRef = display_ns.class_('DisplayBuffer').operator('ref')
+        # FIX: ESPHome strictly requires the base 'Display' reference here
+        DisplayRef = display_ns.class_('Display').operator('ref')
         
         lambda_ = await cg.process_lambda(
-            config[CONF_LAMBDA], [(DisplayBufferRef, "it")], return_type=cg.void
+            config[CONF_LAMBDA], [(DisplayRef, "it")], return_type=cg.void
         )
         cg.add(var.set_writer(lambda_))
