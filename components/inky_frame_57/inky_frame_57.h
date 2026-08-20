@@ -87,7 +87,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     wait_until_idle("Reset Stabilization");
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
-    send_cmd(0x00, {0xEF, 0x08}); // CORRECTED: 0xEF restores the White Background
+    send_cmd(0x00, {0xEF, 0x08}); // 0xEF confirmed to power the matrix correctly
     send_cmd(0x01, {0x37, 0x00, 0x23, 0x23}); 
     send_cmd(0x03, {0x00}); 
     send_cmd(0x06, {0xC7, 0xC7, 0x1D}); 
@@ -106,7 +106,6 @@ class InkyFrame57 : public display::DisplayBuffer,
 
  public:
   void clear() override {
-    // Guarantees ESPHome clears the canvas to White before drawing YAML
     if (this->buffer_ != nullptr) {
       memset(this->buffer_, 0x11, 600 * 448 / 2);
     }
@@ -142,14 +141,16 @@ class InkyFrame57 : public display::DisplayBuffer,
     this->initialised_ = true;
   }
 
-  // THE FIX: We override display() instead of update(). 
-  // ESPHome naturally runs your YAML lambda first, then hands execution to this method!
-  void display() override {
+  // CORRECTED: Restored update() to satisfy the compiler
+  void update() override {
     if (!this->initialised_) return;
 
-    ESP_LOGI(TAG, "Hardware SPI transmission starting...");
+    ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     
-    // DIAGNOSTIC CHECK: Injects a 50x50 Blue Square in the top-left corner.
+    // 1. ESPHome executes your YAML graphics here
+    this->do_update_(); 
+    
+    // 2. DIAGNOSTIC CHECK: Injects a 50x50 Blue Square in the top-left corner.
     for (int y = 0; y < 50; y++) {
       for (int x = 0; x < 50; x++) {
         int idx = (y * 600 + x) / 2;
@@ -203,8 +204,9 @@ class InkyFrame57 : public display::DisplayBuffer,
   void draw_absolute_pixel_internal(int x, int y, Color color) override {
     if (x < 0 || x >= 600 || y < 0 || y >= 448 || this->buffer_ == nullptr) return;
 
+    // Enhanced contrast matcher to catch dark anti-aliased font pixels
     uint8_t c = 1; // Default to White
-    if (color.r < 100 && color.g < 100 && color.b < 100) c = 0;      // Black
+    if (color.r < 150 && color.g < 150 && color.b < 150) c = 0;      // Black (including dark greys)
     else if (color.r > 150 && color.g < 100 && color.b < 100) c = 4; // Red
     else if (color.r < 100 && color.g > 150 && color.b < 100) c = 2; // Green
     else if (color.r < 100 && color.g < 100 && color.b > 150) c = 3; // Blue
