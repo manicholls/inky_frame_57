@@ -14,7 +14,6 @@ class InkyFrame57 : public display::DisplayBuffer,
                     public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW,
                                           spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_4MHZ> {
  protected:
-  uint8_t *buffer_;
   bool initialised_ = false;
 
   const int CS_PIN = 17; 
@@ -99,7 +98,6 @@ class InkyFrame57 : public display::DisplayBuffer,
     send_cmd(0x61, {0x02, 0x58, 0x01, 0xC0}); // 600x448 Resolution
     send_cmd(0xE3, {0xAA}); 
     
-    // Pimoroni specific quirk: Wait 100ms then resend CDI (0x50)
     uint32_t t3 = millis(); while(millis() - t3 < 100) { App.feed_wdt(); yield(); }
     send_cmd(0x50, {0x37});
     
@@ -107,6 +105,8 @@ class InkyFrame57 : public display::DisplayBuffer,
   }
 
  public:
+  bool is_ready() override { return this->initialised_ && this->buffer_ != nullptr; }
+
   void setup() override {
     pinMode(HOLD_VSYS_EN_PIN, OUTPUT);
     digitalWrite(HOLD_VSYS_EN_PIN, HIGH);
@@ -123,29 +123,26 @@ class InkyFrame57 : public display::DisplayBuffer,
 
     this->spi_setup();
 
-    this->set_timeout(5000, [this]() {
-        ESP_LOGI(TAG, "Attempting to allocate 134KB frame buffer...");
-        buffer_ = new (std::nothrow) uint8_t[600 * 448 / 2];
-        
-        if (buffer_ == nullptr) {
-            ESP_LOGE(TAG, "FATAL: OUT OF MEMORY!");
-            return; 
-        }
-        
-        memset(buffer_, 0x11, 600 * 448 / 2); 
-        ESP_LOGI(TAG, "Buffer allocated successfully.");
-        
-        initialised_ = true;
-    });
+    // Allocate buffer directly in setup and register with ESPHome DisplayBuffer
+    ESP_LOGI(TAG, "Allocating 134KB frame buffer...");
+    this->init_internal_(600 * 448 / 2);
+    
+    if (this->buffer_ == nullptr) {
+        ESP_LOGE(TAG, "FATAL: OUT OF MEMORY!");
+        return; 
+    }
+    
+    memset(this->buffer_, 0x11, 600 * 448 / 2); 
+    ESP_LOGI(TAG, "Buffer allocated successfully.");
+    
+    this->initialised_ = true;
   }
 
   void update() override {
-    if (!initialised_) return;
+    if (!this->initialised_) return;
 
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     this->do_update_(); 
-    
-    // The massive Red/Green debug stripe has been completely removed!
     
     init_display();
     
@@ -163,7 +160,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     digitalWrite(DC_PIN, HIGH);
     
     size_t remaining = 600 * 448 / 2;
-    uint8_t *ptr = buffer_;
+    uint8_t *ptr = this->buffer_;
     while (remaining > 0) {
       size_t chunk = remaining > 4096 ? 4096 : remaining;
       this->write_array(ptr, chunk);
@@ -190,14 +187,12 @@ class InkyFrame57 : public display::DisplayBuffer,
   }
 
   void fill(Color color) override {
-    // Defaults the canvas to pure White before your YAML graphics draw
-    memset(buffer_, 0x11, 600 * 448 / 2);
+    memset(this->buffer_, 0x11, 600 * 448 / 2);
   }
 
   void draw_absolute_pixel_internal(int x, int y, Color color) override {
-    if (x < 0 || x >= 600 || y < 0 || y >= 448) return;
+    if (x < 0 || x >= 600 || y < 0 || y >= 448 || this->buffer_ == nullptr) return;
 
-    // Palette mapping: Maps standard RGB to the 7-color e-ink palette
     uint8_t c = 1; 
     if (color.r < 50 && color.g < 50 && color.b < 50) c = 0; // Black
     else if (color.r > 200 && color.g > 200 && color.b > 200) c = 1; // White
@@ -209,9 +204,9 @@ class InkyFrame57 : public display::DisplayBuffer,
 
     int idx = (y * 600 + x) / 2;
     if (x % 2 == 0) {
-      buffer_[idx] = (buffer_[idx] & 0x0F) | (c << 4);
+      this->buffer_[idx] = (this->buffer_[idx] & 0x0F) | (c << 4);
     } else {
-      buffer_[idx] = (buffer_[idx] & 0xF0) | c;
+      this->buffer_[idx] = (this->buffer_[idx] & 0xF0) | c;
     }
   }
 
