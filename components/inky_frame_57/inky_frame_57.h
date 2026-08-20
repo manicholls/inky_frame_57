@@ -87,8 +87,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     wait_until_idle("Reset Stabilization");
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
-    // 0xEF enables internal LUT (0xAF misconfigured external LUT)
-    send_cmd(0x00, {0xEF, 0x08}); 
+    send_cmd(0x00, {0xEF, 0x08}); // Internal LUT enabled
     send_cmd(0x01, {0x37, 0x00, 0x23, 0x23}); 
     send_cmd(0x03, {0x00}); 
     send_cmd(0x06, {0xC7, 0xC7, 0x1D}); 
@@ -106,9 +105,6 @@ class InkyFrame57 : public display::DisplayBuffer,
   }
 
  public:
-  // Forces ESPHome clear() to wipe to White instead of Black
-  Color get_color_off() override { return Color(255, 255, 255); }
-
   void setup() override {
     pinMode(HOLD_VSYS_EN_PIN, OUTPUT);
     digitalWrite(HOLD_VSYS_EN_PIN, HIGH);
