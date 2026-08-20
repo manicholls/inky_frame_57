@@ -77,6 +77,23 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "%s complete!", step);
   }
 
+  uint8_t color_to_index(Color color) {
+    // Exact color matches
+    if (color.r < 100 && color.g < 100 && color.b < 100) return 0; // Black
+    if (color.r > 180 && color.g > 180 && color.b > 180) return 1; // White
+    if (color.r > 150 && color.g < 100 && color.b < 100) return 4; // Red
+    if (color.r < 100 && color.g < 100 && color.b > 150) return 3; // Blue
+    if (color.r < 100 && color.g > 150 && color.b < 100) return 2; // Green
+    if (color.r > 180 && color.g > 180 && color.b < 100) return 5; // Yellow
+    if (color.r > 180 && color.g > 100 && color.b < 80) return 6;  // Orange
+
+    // Fallback for dark anti-aliased font pixels -> Black
+    uint16_t brightness = (uint16_t)color.r + (uint16_t)color.g + (uint16_t)color.b;
+    if (brightness < 300) return 0; 
+    
+    return 1; // Default to White
+  }
+
   void init_display() {
     ESP_LOGI(TAG, "Starting Hardware Reset...");
     digitalWrite(RST_PIN, LOW);
@@ -87,7 +104,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     wait_until_idle("Reset Stabilization");
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
-    send_cmd(0x00, {0xAF, 0x08}); // 0xAF enables internal factory OTP waveform LUT
+    send_cmd(0x00, {0xEF, 0x08}); // 0xEF = 600x448 Panel Resolution setting
     send_cmd(0x01, {0x37, 0x00, 0x23, 0x23}); 
     send_cmd(0x03, {0x00}); 
     send_cmd(0x06, {0xC7, 0xC7, 0x1D}); 
@@ -105,6 +122,13 @@ class InkyFrame57 : public display::DisplayBuffer,
   }
 
  public:
+  // Overrides ESPHome's internal canvas clearing to default to White (0x11)
+  void clear() override {
+    if (this->buffer_ != nullptr) {
+      memset(this->buffer_, 0x11, 600 * 448 / 2);
+    }
+  }
+
   void setup() override {
     pinMode(HOLD_VSYS_EN_PIN, OUTPUT);
     digitalWrite(HOLD_VSYS_EN_PIN, HIGH);
@@ -129,7 +153,7 @@ class InkyFrame57 : public display::DisplayBuffer,
         return; 
     }
     
-    memset(this->buffer_, 0x11, 600 * 448 / 2); 
+    this->clear(); 
     ESP_LOGI(TAG, "Buffer allocated successfully.");
     
     this->initialised_ = true;
@@ -183,31 +207,10 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "Update sequence complete.");
   }
 
-  void fill(Color color) override {
-    uint8_t c = 1; 
-    if (color.r < 50 && color.g < 50 && color.b < 50) c = 0;        // Black
-    else if (color.r > 200 && color.g > 200 && color.b > 200) c = 1; // White
-    else if (color.r < 100 && color.g > 150 && color.b < 100) c = 2; // Green
-    else if (color.r < 100 && color.g < 100 && color.b < 150) c = 3; // Blue
-    else if (color.r > 150 && color.g < 100 && color.b < 100) c = 4; // Red
-    else if (color.r > 200 && color.g > 200 && color.b < 100) c = 5; // Yellow
-    else if (color.r > 200 && color.g > 100 && color.b < 50) c = 6;  // Orange
-
-    uint8_t packed = (c << 4) | c;
-    memset(this->buffer_, packed, 600 * 448 / 2);
-  }
-
   void draw_absolute_pixel_internal(int x, int y, Color color) override {
     if (x < 0 || x >= 600 || y < 0 || y >= 448 || this->buffer_ == nullptr) return;
 
-    uint8_t c = 1; 
-    if (color.r < 50 && color.g < 50 && color.b < 50) c = 0;        // Black
-    else if (color.r > 200 && color.g > 200 && color.b > 200) c = 1; // White
-    else if (color.r < 100 && color.g > 150 && color.b < 100) c = 2; // Green
-    else if (color.r < 100 && color.g < 100 && color.b < 150) c = 3; // Blue
-    else if (color.r > 150 && color.g < 100 && color.b < 100) c = 4; // Red
-    else if (color.r > 200 && color.g > 200 && color.b < 100) c = 5; // Yellow
-    else if (color.r > 200 && color.g > 100 && color.b < 50) c = 6;  // Orange
+    uint8_t c = color_to_index(color);
 
     int idx = (y * 600 + x) / 2;
     if (x % 2 == 0) {
