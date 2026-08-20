@@ -105,8 +105,6 @@ class InkyFrame57 : public display::DisplayBuffer,
   }
 
  public:
-  bool is_ready() override { return this->initialised_ && this->buffer_ != nullptr; }
-
   void setup() override {
     pinMode(HOLD_VSYS_EN_PIN, OUTPUT);
     digitalWrite(HOLD_VSYS_EN_PIN, HIGH);
@@ -123,7 +121,6 @@ class InkyFrame57 : public display::DisplayBuffer,
 
     this->spi_setup();
 
-    // Allocate buffer directly in setup and register with ESPHome DisplayBuffer
     ESP_LOGI(TAG, "Allocating 134KB frame buffer...");
     this->init_internal_(600 * 448 / 2);
     
