@@ -15,16 +15,13 @@ CONFIG_SCHEMA = display.FULL_DISPLAY_SCHEMA.extend({
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     
-    # 1. Register the display and SPI device natively
     await display.register_display(var, config)
     await spi.register_spi_device(var, config)
     
-    # 2. THE MISSING LINK: FORCE LAMBDA COMPILATION
-    # This explicitly translates your YAML lambda into a C++ function 
-    # and attaches it to the display buffer's graphics engine.
     if CONF_LAMBDA in config:
         display_ns = cg.esphome_ns.namespace('display')
-        DisplayBufferRef = display_ns.class_('DisplayBuffer').operator('ptr')
+        # CORRECTED: Changed 'ptr' to 'ref' so it matches ESPHome's display_writer_t
+        DisplayBufferRef = display_ns.class_('DisplayBuffer').operator('ref')
         
         lambda_ = await cg.process_lambda(
             config[CONF_LAMBDA], [(DisplayBufferRef, "it")], return_type=cg.void
