@@ -197,8 +197,8 @@ class InkyFrame57 : public display::DisplayBuffer,
     memset(this->buffer_, packed, 600 * 448 / 2);
   }
 
-  // CORRECTED: Overrides ESPHome's actual virtual pixel renderer
-  void draw_pixel_at(int x, int y, Color color) override {
+  // REQUIRED: Implements DisplayBuffer's pure virtual function
+  void draw_absolute_pixel_internal(int x, int y, Color color) override {
     if (x < 0 || x >= 600 || y < 0 || y >= 448 || this->buffer_ == nullptr) return;
 
     uint8_t c = 1; 
