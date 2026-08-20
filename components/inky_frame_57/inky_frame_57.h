@@ -77,23 +77,6 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "%s complete!", step);
   }
 
-  uint8_t color_to_index(Color color) {
-    // Exact color matches
-    if (color.r < 100 && color.g < 100 && color.b < 100) return 0; // Black
-    if (color.r > 180 && color.g > 180 && color.b > 180) return 1; // White
-    if (color.r > 150 && color.g < 100 && color.b < 100) return 4; // Red
-    if (color.r < 100 && color.g < 100 && color.b > 150) return 3; // Blue
-    if (color.r < 100 && color.g > 150 && color.b < 100) return 2; // Green
-    if (color.r > 180 && color.g > 180 && color.b < 100) return 5; // Yellow
-    if (color.r > 180 && color.g > 100 && color.b < 80) return 6;  // Orange
-
-    // Fallback for dark anti-aliased font pixels -> Black
-    uint16_t brightness = (uint16_t)color.r + (uint16_t)color.g + (uint16_t)color.b;
-    if (brightness < 300) return 0; 
-    
-    return 1; // Default to White
-  }
-
   void init_display() {
     ESP_LOGI(TAG, "Starting Hardware Reset...");
     digitalWrite(RST_PIN, LOW);
@@ -104,7 +87,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     wait_until_idle("Reset Stabilization");
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
-    send_cmd(0x00, {0xEF, 0x08}); // 0xEF = 600x448 Panel Resolution setting
+    send_cmd(0x00, {0xEF, 0x08}); // CORRECTED: 0xEF restores the White Background
     send_cmd(0x01, {0x37, 0x00, 0x23, 0x23}); 
     send_cmd(0x03, {0x00}); 
     send_cmd(0x06, {0xC7, 0xC7, 0x1D}); 
@@ -122,8 +105,8 @@ class InkyFrame57 : public display::DisplayBuffer,
   }
 
  public:
-  // Overrides ESPHome's internal canvas clearing to default to White (0x11)
   void clear() override {
+    // Guarantees ESPHome clears the canvas to White before drawing YAML
     if (this->buffer_ != nullptr) {
       memset(this->buffer_, 0x11, 600 * 448 / 2);
     }
@@ -159,11 +142,21 @@ class InkyFrame57 : public display::DisplayBuffer,
     this->initialised_ = true;
   }
 
-  void update() override {
+  // THE FIX: We override display() instead of update(). 
+  // ESPHome naturally runs your YAML lambda first, then hands execution to this method!
+  void display() override {
     if (!this->initialised_) return;
 
-    ESP_LOGI(TAG, "Rendering ESPHome graphics...");
-    this->do_update_(); 
+    ESP_LOGI(TAG, "Hardware SPI transmission starting...");
+    
+    // DIAGNOSTIC CHECK: Injects a 50x50 Blue Square in the top-left corner.
+    for (int y = 0; y < 50; y++) {
+      for (int x = 0; x < 50; x++) {
+        int idx = (y * 600 + x) / 2;
+        if (x % 2 == 0) this->buffer_[idx] = (this->buffer_[idx] & 0x0F) | (3 << 4); // 3 = Blue
+        else this->buffer_[idx] = (this->buffer_[idx] & 0xF0) | 3;
+      }
+    }
     
     init_display();
     
@@ -210,7 +203,13 @@ class InkyFrame57 : public display::DisplayBuffer,
   void draw_absolute_pixel_internal(int x, int y, Color color) override {
     if (x < 0 || x >= 600 || y < 0 || y >= 448 || this->buffer_ == nullptr) return;
 
-    uint8_t c = color_to_index(color);
+    uint8_t c = 1; // Default to White
+    if (color.r < 100 && color.g < 100 && color.b < 100) c = 0;      // Black
+    else if (color.r > 150 && color.g < 100 && color.b < 100) c = 4; // Red
+    else if (color.r < 100 && color.g > 150 && color.b < 100) c = 2; // Green
+    else if (color.r < 100 && color.g < 100 && color.b > 150) c = 3; // Blue
+    else if (color.r > 150 && color.g > 150 && color.b < 100) c = 5; // Yellow
+    else if (color.r > 150 && color.g > 100 && color.b < 80) c = 6;  // Orange
 
     int idx = (y * 600 + x) / 2;
     if (x % 2 == 0) {
