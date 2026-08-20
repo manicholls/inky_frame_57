@@ -184,14 +184,25 @@ class InkyFrame57 : public display::DisplayBuffer,
   }
 
   void fill(Color color) override {
-    memset(this->buffer_, 0x11, 600 * 448 / 2);
+    uint8_t c = 1; 
+    if (color.r < 50 && color.g < 50 && color.b < 50) c = 0;        // Black
+    else if (color.r > 200 && color.g > 200 && color.b > 200) c = 1; // White
+    else if (color.r < 100 && color.g > 150 && color.b < 100) c = 2; // Green
+    else if (color.r < 100 && color.g < 100 && color.b > 150) c = 3; // Blue
+    else if (color.r > 150 && color.g < 100 && color.b < 100) c = 4; // Red
+    else if (color.r > 200 && color.g > 200 && color.b < 100) c = 5; // Yellow
+    else if (color.r > 200 && color.g > 100 && color.b < 50) c = 6;  // Orange
+
+    uint8_t packed = (c << 4) | c;
+    memset(this->buffer_, packed, 600 * 448 / 2);
   }
 
-  void draw_absolute_pixel_internal(int x, int y, Color color) override {
+  // CORRECTED: Overrides ESPHome's actual virtual pixel renderer
+  void draw_pixel_at(int x, int y, Color color) override {
     if (x < 0 || x >= 600 || y < 0 || y >= 448 || this->buffer_ == nullptr) return;
 
     uint8_t c = 1; 
-    if (color.r < 50 && color.g < 50 && color.b < 50) c = 0; // Black
+    if (color.r < 50 && color.g < 50 && color.b < 50) c = 0;        // Black
     else if (color.r > 200 && color.g > 200 && color.b > 200) c = 1; // White
     else if (color.r < 100 && color.g > 150 && color.b < 100) c = 2; // Green
     else if (color.r < 100 && color.g < 100 && color.b > 150) c = 3; // Blue
