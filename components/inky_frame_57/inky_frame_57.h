@@ -77,6 +77,18 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "%s complete!", step);
   }
 
+  uint8_t color_to_index(Color color) {
+    if (color.r > 200 && color.g > 200 && color.b > 200) return 1; // White
+    if (color.r < 100 && color.g < 100 && color.b < 100) return 0; // Black
+    if (color.r > 150 && color.g < 100 && color.b < 100) return 4; // Red
+    if (color.r < 100 && color.g > 150 && color.b < 100) return 2; // Green
+    if (color.r < 100 && color.g < 100 && color.b > 150) return 3; // Blue
+    if (color.r > 150 && color.g > 150 && color.b < 100) return 5; // Yellow
+    if (color.r > 150 && color.g > 100 && color.b < 80) return 6;  // Orange
+    
+    return 0; // Force all grey anti-aliased font pixels to Black
+  }
+
   void init_display() {
     ESP_LOGI(TAG, "Starting Hardware Reset...");
     digitalWrite(RST_PIN, LOW);
@@ -105,10 +117,12 @@ class InkyFrame57 : public display::DisplayBuffer,
   }
 
  public:
-  void clear() override {
-    if (this->buffer_ != nullptr) {
-      memset(this->buffer_, 0x11, 600 * 448 / 2);
-    }
+  // Fast memory buffer fill bypasses ESPHome timeout bugs
+  void fill(Color color) override {
+    if (this->buffer_ == nullptr) return;
+    uint8_t c = this->color_to_index(color);
+    uint8_t packed = (c << 4) | c;
+    memset(this->buffer_, packed, 600 * 448 / 2);
   }
 
   void setup() override {
@@ -135,9 +149,8 @@ class InkyFrame57 : public display::DisplayBuffer,
         return; 
     }
     
-    // Explicitly lock the rotation so ESPHome doesn't draw off-screen
     this->rotation_ = display::DISPLAY_ROTATION_0_DEGREES;
-    this->clear(); 
+    this->fill(Color(255, 255, 255)); 
     ESP_LOGI(TAG, "Buffer allocated successfully.");
     
     this->initialised_ = true;
@@ -146,17 +159,8 @@ class InkyFrame57 : public display::DisplayBuffer,
   void update() override {
     if (!this->initialised_) return;
 
-    ESP_LOGI(TAG, "Rendering ESPHome graphics...");
+    ESP_LOGI(TAG, "Executing YAML lambda graphics...");
     this->do_update_(); 
-    
-    // Tiny 10x10 Diagnostic Blue Dot in the top-left corner
-    for (int y = 0; y < 10; y++) {
-      for (int x = 0; x < 10; x++) {
-        int idx = (y * 600 + x) / 2;
-        if (x % 2 == 0) this->buffer_[idx] = (this->buffer_[idx] & 0x0F) | (3 << 4);
-        else this->buffer_[idx] = (this->buffer_[idx] & 0xF0) | 3;
-      }
-    }
     
     init_display();
     
@@ -203,16 +207,12 @@ class InkyFrame57 : public display::DisplayBuffer,
   void draw_absolute_pixel_internal(int x, int y, Color color) override {
     if (x < 0 || x >= 600 || y < 0 || y >= 448 || this->buffer_ == nullptr) return;
 
-    uint8_t c = 1; 
-    
-    if (color.r > 200 && color.g > 200 && color.b > 200) { c = 1; }
-    else if (color.r < 100 && color.g < 100 && color.b < 100) { c = 0; }
-    else if (color.r > 150 && color.g < 100 && color.b < 100) { c = 4; } // Red
-    else if (color.r < 100 && color.g > 150 && color.b < 100) { c = 2; }
-    else if (color.r < 100 && color.g < 100 && color.b > 150) { c = 3; }
-    else if (color.r > 150 && color.g > 150 && color.b < 100) { c = 5; }
-    else if (color.r > 150 && color.g > 100 && color.b < 80) { c = 6; }
-    else { c = 0; } 
+    // PHYSICAL 180-DEGREE ROTATION FLIP
+    // Maps ESPHome's Top-Left (0,0) to the panel's physical Top-Left
+    x = 599 - x;
+    y = 447 - y;
+
+    uint8_t c = this->color_to_index(color);
 
     int idx = (y * 600 + x) / 2;
     if (x % 2 == 0) {
