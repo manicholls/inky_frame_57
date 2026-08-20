@@ -85,8 +85,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     if (color.r < 100 && color.g < 100 && color.b > 150) return 3; // Blue
     if (color.r > 150 && color.g > 150 && color.b < 100) return 5; // Yellow
     if (color.r > 150 && color.g > 100 && color.b < 80) return 6;  // Orange
-    
-    return 0; // Force all grey anti-aliased font pixels to Black
+    return 0; // Snap grey anti-aliasing to Black
   }
 
   void init_display() {
@@ -117,7 +116,13 @@ class InkyFrame57 : public display::DisplayBuffer,
   }
 
  public:
-  // Fast memory buffer fill bypasses ESPHome timeout bugs
+  // Restored: Guarantees ESPHome clears the canvas to White before drawing
+  void clear() override {
+    if (this->buffer_ != nullptr) {
+      memset(this->buffer_, 0x11, 600 * 448 / 2);
+    }
+  }
+
   void fill(Color color) override {
     if (this->buffer_ == nullptr) return;
     uint8_t c = this->color_to_index(color);
@@ -150,7 +155,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     }
     
     this->rotation_ = display::DISPLAY_ROTATION_0_DEGREES;
-    this->fill(Color(255, 255, 255)); 
+    this->clear(); 
     ESP_LOGI(TAG, "Buffer allocated successfully.");
     
     this->initialised_ = true;
@@ -159,7 +164,17 @@ class InkyFrame57 : public display::DisplayBuffer,
   void update() override {
     if (!this->initialised_) return;
 
-    ESP_LOGI(TAG, "Executing YAML lambda graphics...");
+    ESP_LOGI(TAG, "Rendering ESPHome graphics...");
+    
+    // GHOST LAMBDA DETECTOR
+    if (!this->writer_.has_value()) {
+      ESP_LOGE(TAG, "=========================================================");
+      ESP_LOGE(TAG, "CRITICAL ERROR: YAML LAMBDA IS MISSING!");
+      ESP_LOGE(TAG, "ESPHome completely ignored your display lambda.");
+      ESP_LOGE(TAG, "You MUST click 'Clean Build' in the ESPHome UI to fix this.");
+      ESP_LOGE(TAG, "=========================================================");
+    }
+
     this->do_update_(); 
     
     init_display();
@@ -207,8 +222,7 @@ class InkyFrame57 : public display::DisplayBuffer,
   void draw_absolute_pixel_internal(int x, int y, Color color) override {
     if (x < 0 || x >= 600 || y < 0 || y >= 448 || this->buffer_ == nullptr) return;
 
-    // PHYSICAL 180-DEGREE ROTATION FLIP
-    // Maps ESPHome's Top-Left (0,0) to the panel's physical Top-Left
+    // 180-DEGREE FLIP (Fixes the Bottom-Right coordinate bug)
     x = 599 - x;
     y = 447 - y;
 
