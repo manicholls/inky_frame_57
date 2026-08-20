@@ -22,12 +22,7 @@ class InkyFrame57 : public display::DisplayBuffer,
   const int RST_PIN = 27;
   const int HOLD_VSYS_EN_PIN = 2; 
   const int BUSY_PIN = 0;
-  
-  void setup() override {
-    ...
-    pinMode(BUSY_PIN, INPUT);   // must be explicit — don't let it float or default elsewhere
-    ...
-  }
+
 
   void wait_busy(const char* step, uint32_t max_ms) {
     ESP_LOGI(TAG, "Waiting for %s (busy pin)...", step);
