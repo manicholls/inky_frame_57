@@ -22,38 +22,34 @@ class InkyFrame57 : public display::DisplayBuffer,
   const int RST_PIN = 27;
   const int HOLD_VSYS_EN_PIN = 2; 
 
-  // The Shift Register Pins for the Hardware Hack
   const int SR_CLK_PIN = 8;
   const int SR_LATCH_PIN = 9;
   const int SR_DATA_PIN = 10;
 
-  void command(uint8_t command) {
+  // THE FIX: Send a command and its arguments in a SINGLE continuous SPI transaction.
+  // E-ink controllers reject arguments if the CS pin pulses HIGH between bytes!
+  void send_cmd(uint8_t command, std::initializer_list<uint8_t> args = {}) {
     this->enable(); 
     digitalWrite(DC_PIN, LOW);
     digitalWrite(CS_PIN, LOW); 
     this->write_byte(command);
+    
+    if (args.size() > 0) {
+      digitalWrite(DC_PIN, HIGH);
+      for (uint8_t arg : args) {
+        this->write_byte(arg);
+      }
+    }
     digitalWrite(CS_PIN, HIGH);
     this->disable(); 
   }
 
-  void data(uint8_t data) {
-    this->enable();
-    digitalWrite(DC_PIN, HIGH);
-    digitalWrite(CS_PIN, LOW);
-    this->write_byte(data);
-    digitalWrite(CS_PIN, HIGH);
-    this->disable();
-  }
-
-  // The brilliant hack: Manually read the shift register to find the D7 BUSY pin
   bool is_busy() {
-    // Pulse Latch LOW then HIGH to load inputs from the buttons and the screen
     digitalWrite(SR_LATCH_PIN, LOW);
     delayMicroseconds(5);
     digitalWrite(SR_LATCH_PIN, HIGH);
     delayMicroseconds(5);
 
-    // Clock in all 8 bits
     uint8_t val = 0;
     for (int i = 0; i < 8; ++i) {
       if (digitalRead(SR_DATA_PIN) == HIGH) {
@@ -64,22 +60,18 @@ class InkyFrame57 : public display::DisplayBuffer,
       digitalWrite(SR_CLK_PIN, LOW);
       delayMicroseconds(1);
     }
-    
-    // D7 is the Most Significant Bit (Bit 7). The screen pulls it LOW when busy.
     return (val & 0x80) == 0; 
   }
 
   void wait_until_idle(const char* step) {
     ESP_LOGI(TAG, "Waiting for hardware: %s...", step);
     
-    // Brief delay to allow the screen to assert the BUSY pin before we check
     uint32_t start_grace = millis();
     while (millis() - start_grace < 50) {
       App.feed_wdt();
       yield();
     }
     
-    // Sit in this loop until D7 on the shift register goes HIGH
     while (is_busy()) {
       delay(10);
       App.feed_wdt();
@@ -91,8 +83,6 @@ class InkyFrame57 : public display::DisplayBuffer,
   void init_display() {
     ESP_LOGI(TAG, "Starting Hardware Reset...");
     digitalWrite(RST_PIN, LOW);
-    
-    // Force physical reset delays 
     uint32_t t1 = millis(); while(millis() - t1 < 20) { App.feed_wdt(); yield(); }
     digitalWrite(RST_PIN, HIGH);
     uint32_t t2 = millis(); while(millis() - t2 < 200) { App.feed_wdt(); yield(); }
@@ -100,16 +90,20 @@ class InkyFrame57 : public display::DisplayBuffer,
     wait_until_idle("Reset Stabilization");
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
-    command(0x00); data(0xEF); data(0x08); 
-    command(0x01); data(0x37); data(0x00); data(0x23); data(0x23); 
-    command(0x03); data(0x00); 
-    command(0x06); data(0xC7); data(0xC7); data(0x1D); 
-    command(0x30); data(0x3C); 
-    command(0x40); data(0x00); 
-    command(0x50); data(0x37); 
-    command(0x60); data(0x22); 
-    command(0x61); data(0x02); data(0x58); data(0x01); data(0xC0); 
-    command(0xE3); data(0xAA); 
+    send_cmd(0x00, {0xAF, 0x08}); 
+    send_cmd(0x01, {0x37, 0x00, 0x23, 0x23}); 
+    send_cmd(0x03, {0x00}); 
+    send_cmd(0x06, {0xC7, 0xC7, 0x1D}); 
+    send_cmd(0x30, {0x3C}); 
+    send_cmd(0x40, {0x00}); 
+    send_cmd(0x50, {0x37}); 
+    send_cmd(0x60, {0x22}); 
+    send_cmd(0x61, {0x02, 0x58, 0x01, 0xC0}); // 600x448 Resolution
+    send_cmd(0xE3, {0xAA}); 
+    
+    // Pimoroni specific quirk: Wait 100ms then resend CDI (0x50)
+    uint32_t t3 = millis(); while(millis() - t3 < 100) { App.feed_wdt(); yield(); }
+    send_cmd(0x50, {0x37});
     
     ESP_LOGI(TAG, "Display Initialization Complete!");
   }
@@ -125,7 +119,6 @@ class InkyFrame57 : public display::DisplayBuffer,
     pinMode(DC_PIN, OUTPUT);
     pinMode(RST_PIN, OUTPUT);
     
-    // Ensure the shift register pins are correctly set for our manual reads
     pinMode(SR_CLK_PIN, OUTPUT);
     pinMode(SR_LATCH_PIN, OUTPUT);
     pinMode(SR_DATA_PIN, INPUT);
@@ -154,7 +147,6 @@ class InkyFrame57 : public display::DisplayBuffer,
     ESP_LOGI(TAG, "Rendering ESPHome graphics...");
     this->do_update_(); 
     
-    // Alternating Red/Green Stripe to guarantee the hash checker fires
     static bool toggle = false;
     toggle = !toggle;
     uint8_t hb_color = toggle ? 0x44 : 0x22; 
@@ -166,7 +158,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     init_display();
     
     ESP_LOGI(TAG, "Powering ON E-Ink Panel...");
-    command(0x04);
+    send_cmd(0x04);
     wait_until_idle("Power ON"); 
 
     ESP_LOGI(TAG, "Transmitting buffer to display...");
@@ -192,14 +184,14 @@ class InkyFrame57 : public display::DisplayBuffer,
     this->disable(); 
     
     ESP_LOGI(TAG, "Data Stop command...");
-    command(0x11);
+    send_cmd(0x11);
     
     ESP_LOGI(TAG, "Commanding screen refresh...");
-    command(0x12); 
+    send_cmd(0x12); 
     wait_until_idle("Screen Refresh"); 
 
     ESP_LOGI(TAG, "Powering OFF E-Ink Panel...");
-    command(0x02);
+    send_cmd(0x02);
     wait_until_idle("Power OFF");
 
     ESP_LOGI(TAG, "Update sequence complete.");
