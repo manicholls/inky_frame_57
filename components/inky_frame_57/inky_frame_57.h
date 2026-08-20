@@ -87,7 +87,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     wait_until_idle("Reset Stabilization");
 
     ESP_LOGI(TAG, "Sending initialization sequence...");
-    send_cmd(0x00, {0xEF, 0x08}); // Internal LUT enabled
+    send_cmd(0x00, {0xAF, 0x08}); // 0xAF enables internal factory OTP waveform LUT
     send_cmd(0x01, {0x37, 0x00, 0x23, 0x23}); 
     send_cmd(0x03, {0x00}); 
     send_cmd(0x06, {0xC7, 0xC7, 0x1D}); 
@@ -188,7 +188,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     if (color.r < 50 && color.g < 50 && color.b < 50) c = 0;        // Black
     else if (color.r > 200 && color.g > 200 && color.b > 200) c = 1; // White
     else if (color.r < 100 && color.g > 150 && color.b < 100) c = 2; // Green
-    else if (color.r < 100 && color.g < 100 && color.b > 150) c = 3; // Blue
+    else if (color.r < 100 && color.g < 100 && color.b < 150) c = 3; // Blue
     else if (color.r > 150 && color.g < 100 && color.b < 100) c = 4; // Red
     else if (color.r > 200 && color.g > 200 && color.b < 100) c = 5; // Yellow
     else if (color.r > 200 && color.g > 100 && color.b < 50) c = 6;  // Orange
@@ -204,7 +204,7 @@ class InkyFrame57 : public display::DisplayBuffer,
     if (color.r < 50 && color.g < 50 && color.b < 50) c = 0;        // Black
     else if (color.r > 200 && color.g > 200 && color.b > 200) c = 1; // White
     else if (color.r < 100 && color.g > 150 && color.b < 100) c = 2; // Green
-    else if (color.r < 100 && color.g < 100 && color.b > 150) c = 3; // Blue
+    else if (color.r < 100 && color.g < 100 && color.b < 150) c = 3; // Blue
     else if (color.r > 150 && color.g < 100 && color.b < 100) c = 4; // Red
     else if (color.r > 200 && color.g > 200 && color.b < 100) c = 5; // Yellow
     else if (color.r > 200 && color.g > 100 && color.b < 50) c = 6;  // Orange
